@@ -1,9 +1,0 @@
-uploads/
-__pycache__/
-*.pyc
-.vscode/
-.idea/
-.env
-venv/
-*.log
-.DS_Store
