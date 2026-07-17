@@ -1,17 +1,18 @@
 import os
 import uuid
+import tempfile
 from datetime import datetime
 from flask import Flask, render_template_string, request, send_from_directory, jsonify
 
 app = Flask(__name__)
 
-# Configure upload folder
-UPLOAD_FOLDER = 'uploads'
+# Vercel-এ ফাইল সংরক্ষণের জন্য tmp ফোল্ডার ব্যবহার করুন
+UPLOAD_FOLDER = os.path.join(tempfile.gettempdir(), 'uploads')
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max total file size
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
 
 # Allowed image extensions
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'}
@@ -900,6 +901,9 @@ def cleanup():
                 os.remove(file_path)
                 deleted += 1
     return jsonify({'success': True, 'deleted': deleted})
+
+# Vercel-এর জন্য WSGI handler (গুরুত্বপূর্ণ)
+app = app
 
 if __name__ == '__main__':
     print("\n" + "="*50)
