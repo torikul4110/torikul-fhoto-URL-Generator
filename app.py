@@ -15,8 +15,8 @@ USERNAME = "TORIKUL"
 PASSWORD = "torikul_1999"
 
 # ============ GitHub Config ============
-GITHUB_TOKEN = "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"
-REPO_NAME = "torikul4110/torikul-fhoto-URL-Generator"
+GITHUB_TOKEN = "তুমার GITUB API KEY "
+REPO_NAME = "GITHUB এর address link দাও  -fhoto-URL-Generator"
 BRANCH = "main"
 IMAGES_FOLDER = "images"
 
