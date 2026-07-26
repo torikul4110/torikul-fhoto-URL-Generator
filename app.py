@@ -1,28 +1,94 @@
 import os
 import uuid
 import tempfile
+import json
+import secrets
+import shutil
 from datetime import datetime
-from flask import Flask, render_template_string, request, send_from_directory, jsonify
+from flask import Flask, render_template_string, request, send_from_directory, jsonify, session, redirect, url_for
+from functools import wraps
+import qrcode
+from io import BytesIO
+import base64
+import re
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
-# Vercel-এ ফাইল সংরক্ষণের জন্য tmp ফোল্ডার ব্যবহার করুন
+# File storage paths
 UPLOAD_FOLDER = os.path.join(tempfile.gettempdir(), 'uploads')
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+DATA_FOLDER = os.path.join(tempfile.gettempdir(), 'data')
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(DATA_FOLDER, exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
+app.config['DATA_FOLDER'] = DATA_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB
+
+# Login credentials
+ADMIN_USERNAME = "Torikul"
+ADMIN_PASSWORD = "@torikul_1999"
 
 # Allowed image extensions
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'}
 
+# Data files
+IMAGES_FILE = os.path.join(DATA_FOLDER, 'images.json')
+GROUPS_FILE = os.path.join(DATA_FOLDER, 'groups.json')
+LINKS_FILE = os.path.join(DATA_FOLDER, 'links.json')
+LINK_GROUPS_FILE = os.path.join(DATA_FOLDER, 'link_groups.json')
+
+# ============ DATA MANAGEMENT ============
+
+def init_data_files():
+    for file_path in [IMAGES_FILE, GROUPS_FILE, LINKS_FILE, LINK_GROUPS_FILE]:
+        if not os.path.exists(file_path):
+            with open(file_path, 'w') as f:
+                json.dump({}, f)
+
+init_data_files()
+
+def load_images():
+    with open(IMAGES_FILE, 'r') as f:
+        return json.load(f)
+
+def save_images(images):
+    with open(IMAGES_FILE, 'w') as f:
+        json.dump(images, f, indent=2)
+
+def load_groups():
+    with open(GROUPS_FILE, 'r') as f:
+        return json.load(f)
+
+def save_groups(groups):
+    with open(GROUPS_FILE, 'w') as f:
+        json.dump(groups, f, indent=2)
+
+def load_links():
+    with open(LINKS_FILE, 'r') as f:
+        return json.load(f)
+
+def save_links(links):
+    with open(LINKS_FILE, 'w') as f:
+        json.dump(links, f, indent=2)
+
+def load_link_groups():
+    with open(LINK_GROUPS_FILE, 'r') as f:
+        return json.load(f)
+
+def save_link_groups(link_groups):
+    with open(LINK_GROUPS_FILE, 'w') as f:
+        json.dump(link_groups, f, indent=2)
+
+def generate_unique_id():
+    """Generate unique ID with 'torikul' suffix"""
+    random_part = secrets.token_hex(4)
+    return f"{random_part}torikul"
+
 def allowed_file(filename):
-    """Check if file has an allowed extension"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 def get_file_size(filepath):
-    """Get file size in human readable format"""
     size_bytes = os.path.getsize(filepath)
     for unit in ['B', 'KB', 'MB', 'GB']:
         if size_bytes < 1024.0:
@@ -30,231 +96,586 @@ def get_file_size(filepath):
         size_bytes /= 1024.0
     return f"{size_bytes:.1f} GB"
 
-# HTML Template
-INDEX_TEMPLATE = '''
+def generate_qr_code_base64(url):
+    """Generate QR code and return as base64 string"""
+    qr = qrcode.QRCode(version=1, box_size=10, border=4)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buffered = BytesIO()
+    img.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode()
+
+def validate_url(url):
+    """Validate if the URL is valid"""
+    url_pattern = re.compile(
+        r'^https?://'  # http:// or https://
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
+        r'localhost|'  # localhost...
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
+        r'(?::\d+)?'  # optional port
+        r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+    return re.match(url_pattern, url) is not None
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# ============ LOGIN TEMPLATE ============
+
+LOGIN_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="bn">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Photo to URL Generator - ইমেজ থেকে লিংক জেনারেটর</title>
+    <title>Login - TORIKUL IMAGE • LINK • QR SYSTEM</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            overflow: hidden;
+            position: relative;
+        }
+        .particles {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 0;
+        }
+        .particle {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            animation: float 15s infinite;
+        }
+        @keyframes float {
+            0% { transform: translateY(100vh) scale(0); opacity: 0; }
+            20% { opacity: 0.5; }
+            80% { opacity: 0.5; }
+            100% { transform: translateY(-100vh) scale(1); opacity: 0; }
+        }
+        .glow-orb {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(80px);
+            opacity: 0.3;
+            z-index: 0;
+            animation: pulse 8s ease-in-out infinite;
+        }
+        .glow-orb:nth-child(1) {
+            width: 400px; height: 400px;
+            background: #667eea;
+            top: -100px; right: -100px;
+        }
+        .glow-orb:nth-child(2) {
+            width: 300px; height: 300px;
+            background: #764ba2;
+            bottom: -50px; left: -50px;
+            animation-delay: 2s;
+        }
+        .glow-orb:nth-child(3) {
+            width: 200px; height: 200px;
+            background: #f093fb;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            animation-delay: 4s;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 0.3; }
+            50% { transform: scale(1.3); opacity: 0.5; }
+        }
+        .login-container {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            max-width: 420px;
             padding: 20px;
         }
-
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
+        .login-box {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 24px;
+            padding: 40px 35px;
+            box-shadow: 0 25px 80px rgba(0, 0, 0, 0.5);
         }
-
-        .header {
-            text-align: center;
-            color: white;
-            margin-bottom: 40px;
-            padding: 20px;
+        .login-header { text-align: center; margin-bottom: 35px; }
+        .login-icon { font-size: 3.5em; display: block; margin-bottom: 10px; }
+        .login-title { color: #fff; font-size: 1.8em; font-weight: 700; }
+        .login-subtitle { color: rgba(255, 255, 255, 0.6); font-size: 0.95em; margin-top: 5px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; color: rgba(255, 255, 255, 0.7); font-size: 0.9em; margin-bottom: 8px; font-weight: 500; }
+        .form-group input {
+            width: 100%;
+            padding: 14px 20px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            color: #fff;
+            font-size: 1em;
+            transition: all 0.3s;
+            outline: none;
         }
-
-        .header h1 {
-            font-size: 3em;
-            margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        .form-group input:focus {
+            border-color: #667eea;
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow: 0 0 20px rgba(102, 126, 234, 0.15);
         }
-
-        .header p {
-            font-size: 1.2em;
-            opacity: 0.95;
-        }
-
-        .upload-card {
-            background: white;
-            border-radius: 20px;
-            padding: 40px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            margin-bottom: 30px;
-            transition: transform 0.3s;
-        }
-
-        .upload-card:hover {
-            transform: translateY(-5px);
-        }
-
-        .upload-area {
-            border: 3px dashed #667eea;
-            border-radius: 15px;
-            padding: 60px 20px;
-            text-align: center;
-            background: #f8f9ff;
+        .form-group input::placeholder { color: rgba(255, 255, 255, 0.3); }
+        .btn-login {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 12px;
+            color: #fff;
+            font-size: 1.1em;
+            font-weight: 600;
             cursor: pointer;
             transition: all 0.3s;
         }
-
-        .upload-area:hover {
-            border-color: #764ba2;
-            background: #f0f2ff;
-        }
-
-        .upload-icon {
-            font-size: 4em;
+        .btn-login:hover { transform: scale(1.02); box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3); }
+        .error-msg {
+            background: rgba(255, 0, 0, 0.15);
+            border: 1px solid rgba(255, 0, 0, 0.2);
+            color: #ff6b6b;
+            padding: 12px 16px;
+            border-radius: 10px;
             margin-bottom: 20px;
-        }
-
-        .upload-text {
-            font-size: 1.2em;
-            color: #666;
-            margin-bottom: 10px;
-        }
-
-        .upload-subtext {
-            color: #999;
             font-size: 0.9em;
+            display: {{ 'block' if error else 'none' }};
         }
-
-        #fileInput {
-            display: none;
+        .login-footer {
+            text-align: center;
+            margin-top: 25px;
+            color: rgba(255, 255, 255, 0.3);
+            font-size: 0.8em;
         }
-
-        .btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 12px 30px;
-            font-size: 1em;
-            border-radius: 50px;
-            cursor: pointer;
-            transition: transform 0.2s;
-            margin: 10px 5px;
+        @media (max-width: 480px) {
+            .login-box { padding: 30px 20px; }
+            .login-title { font-size: 1.5em; }
+            .glow-orb { display: none; }
         }
-
-        .btn:hover {
-            transform: scale(1.05);
+    </style>
+</head>
+<body>
+    <div class="glow-orb"></div><div class="glow-orb"></div><div class="glow-orb"></div>
+    <div class="particles" id="particles"></div>
+    <div class="login-container">
+        <div class="login-box">
+            <div class="login-header">
+                <span class="login-icon">🖼️</span>
+                <h1 class="login-title">TORIKUL SYSTEM</h1>
+                <p class="login-subtitle">Welcome Back, TORIKUL</p>
+            </div>
+            <div class="error-msg" id="errorMsg">{{ error }}</div>
+            <form method="POST" action="{{ url_for('login') }}">
+                <div class="form-group">
+                    <label>👤 Username</label>
+                    <input type="text" name="username" placeholder="Enter your username" value="{{ username or '' }}" required>
+                </div>
+                <div class="form-group">
+                    <label>🔐 Password</label>
+                    <input type="password" name="password" placeholder="Enter your password" required>
+                </div>
+                <button type="submit" class="btn-login">🚀 LOGIN</button>
+            </form>
+            <div class="login-footer">🔨 Created by TORIKUL</div>
+        </div>
+    </div>
+    <script>
+        const container = document.getElementById('particles');
+        for (let i = 0; i < 50; i++) {
+            const p = document.createElement('div');
+            p.className = 'particle';
+            p.style.left = Math.random() * 100 + '%';
+            p.style.width = (Math.random() * 4 + 2) + 'px';
+            p.style.height = p.style.width;
+            p.style.animationDuration = (Math.random() * 20 + 10) + 's';
+            p.style.animationDelay = (Math.random() * 10) + 's';
+            container.appendChild(p);
         }
+        {% if error %}document.getElementById('errorMsg').style.display = 'block';{% endif %}
+    </script>
+</body>
+</html>
+'''
 
-        .btn-secondary {
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+# ============ DASHBOARD TEMPLATE ============
+
+DASHBOARD_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - TORIKUL IMAGE • LINK • QR SYSTEM</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a1a;
+            min-height: 100vh;
+            color: #fff;
         }
-
-        .preview-area {
-            margin-top: 30px;
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-            gap: 20px;
-        }
-
-        .preview-card {
-            background: white;
-            border-radius: 15px;
-            overflow: hidden;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        .app-container { display: flex; min-height: 100vh; }
+        .sidebar {
+            width: 260px;
+            background: rgba(20, 20, 40, 0.95);
+            backdrop-filter: blur(10px);
+            border-right: 1px solid rgba(255, 255, 255, 0.05);
+            padding: 25px 0;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+            z-index: 100;
             transition: transform 0.3s;
         }
-
-        .preview-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
-        }
-
-        .preview-image {
-            width: 100%;
-            height: 200px;
-            object-fit: cover;
-        }
-
-        .preview-info {
-            padding: 15px;
-        }
-
-        .preview-name {
-            font-weight: bold;
-            margin-bottom: 5px;
-            color: #333;
-            word-break: break-all;
-        }
-
-        .preview-size {
-            color: #999;
-            font-size: 0.9em;
-            margin-bottom: 10px;
-        }
-
-        .url-link {
-            background: #f0f0f0;
-            padding: 8px;
-            border-radius: 8px;
-            font-size: 0.85em;
-            word-break: break-all;
-            margin: 10px 0;
-            cursor: pointer;
-        }
-
-        .copy-btn {
-            background: #667eea;
-            color: white;
-            border: none;
-            padding: 5px 10px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 0.85em;
-        }
-
-        .copy-btn:hover {
-            background: #764ba2;
-        }
-
-        .result-card {
-            background: white;
-            border-radius: 20px;
-            padding: 30px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            margin-top: 30px;
-        }
-
-        .result-title {
-            font-size: 1.5em;
+        .sidebar-brand {
+            text-align: center;
+            padding: 0 20px 25px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
             margin-bottom: 20px;
-            color: #667eea;
         }
-
-        .link-list {
-            list-style: none;
+        .sidebar-brand .logo { font-size: 2.2em; }
+        .sidebar-brand .brand-name {
+            font-size: 1.2em;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
-
-        .link-item {
-            background: #f8f9ff;
-            padding: 15px;
-            margin-bottom: 10px;
-            border-radius: 10px;
+        .sidebar-brand .brand-sub {
+            font-size: 0.7em;
+            color: rgba(255, 255, 255, 0.4);
+            -webkit-text-fill-color: rgba(255, 255, 255, 0.4);
+        }
+        .nav-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 25px;
+            color: rgba(255, 255, 255, 0.6);
+            text-decoration: none;
+            transition: all 0.3s;
+            border-left: 3px solid transparent;
+            gap: 12px;
+            cursor: pointer;
+        }
+        .nav-item:hover, .nav-item.active {
+            background: rgba(102, 126, 234, 0.1);
+            color: #fff;
+            border-left-color: #667eea;
+        }
+        .nav-item .nav-icon { font-size: 1.2em; width: 28px; }
+        .nav-item .nav-text { font-size: 0.95em; }
+        .nav-item.logout {
+            margin-top: 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            padding-top: 20px;
+            color: #ff6b6b;
+        }
+        .nav-item.logout:hover { border-left-color: #ff6b6b; background: rgba(255, 0, 0, 0.1); }
+        .main-content {
+            margin-left: 260px;
+            flex: 1;
+            padding: 25px 30px;
+        }
+        .top-bar {
             display: flex;
             justify-content: space-between;
             align-items: center;
+            margin-bottom: 30px;
             flex-wrap: wrap;
+            gap: 15px;
         }
-
-        .link-url {
-            font-family: monospace;
-            color: #667eea;
-            word-break: break-all;
-            flex: 1;
-            margin-right: 10px;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 20px;
+        .top-bar h1 { font-size: 1.8em; }
+        .top-bar h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .user-info { color: rgba(255, 255, 255, 0.6); font-size: 0.95em; }
+        .menu-toggle {
             display: none;
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 1.8em;
+            cursor: pointer;
         }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 16px;
+            padding: 20px 25px;
+            transition: all 0.3s;
+        }
+        .stat-card:hover { transform: translateY(-3px); background: rgba(255, 255, 255, 0.06); }
+        .stat-card .stat-icon { font-size: 2em; margin-bottom: 8px; }
+        .stat-card .stat-number { font-size: 2em; font-weight: 700; }
+        .stat-card .stat-label { color: rgba(255, 255, 255, 0.5); font-size: 0.85em; }
+        .upload-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .upload-card {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 16px;
+            padding: 30px;
+            text-align: center;
+            transition: all 0.3s;
+            cursor: pointer;
+            text-decoration: none;
+            color: #fff;
+        }
+        .upload-card:hover { transform: translateY(-5px); background: rgba(255, 255, 255, 0.08); }
+        .upload-card .uc-icon { font-size: 3em; margin-bottom: 15px; }
+        .upload-card .uc-title { font-size: 1.1em; font-weight: 600; }
+        .upload-card .uc-desc { color: rgba(255, 255, 255, 0.5); font-size: 0.8em; margin-top: 5px; }
+        .section-title { font-size: 1.3em; margin: 30px 0 15px; color: rgba(255, 255, 255, 0.8); }
+        .toast-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            padding: 14px 24px;
+            border-radius: 12px;
+            background: rgba(20, 20, 40, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 0.95em;
+            animation: slideIn 0.3s ease-out;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes slideIn {
+            from { transform: translateX(100px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @media (max-width: 768px) {
+            .sidebar { transform: translateX(-100%); width: 280px; }
+            .sidebar.open { transform: translateX(0); }
+            .main-content { margin-left: 0; padding: 20px 15px; }
+            .menu-toggle { display: block; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .top-bar h1 { font-size: 1.3em; }
+        }
+        @media (max-width: 480px) {
+            .stats-grid { grid-template-columns: 1fr; }
+            .upload-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <nav class="sidebar" id="sidebar">
+            <div class="sidebar-brand">
+                <div class="logo">🖼️</div>
+                <div class="brand-name">TORIKUL SYSTEM</div>
+                <div class="brand-sub">Image • Link • QR</div>
+            </div>
+            <a href="{{ url_for('dashboard') }}" class="nav-item active">
+                <span class="nav-icon">🏠</span><span class="nav-text">Dashboard</span>
+            </a>
+            <a href="{{ url_for('upload') }}" class="nav-item">
+                <span class="nav-icon">📸</span><span class="nav-text">Upload Image</span>
+            </a>
+            <a href="{{ url_for('multiple_upload') }}" class="nav-item">
+                <span class="nav-icon">📸📸</span><span class="nav-text">Multiple Upload</span>
+            </a>
+            <a href="{{ url_for('link_qr') }}" class="nav-item">
+                <span class="nav-icon">🔗</span><span class="nav-text">Link to QR</span>
+            </a>
+            <a href="{{ url_for('multiple_link_qr') }}" class="nav-item">
+                <span class="nav-icon">🔗🔗</span><span class="nav-text">Multiple Links</span>
+            </a>
+            <a href="{{ url_for('gallery') }}" class="nav-item">
+                <span class="nav-icon">🖼️</span><span class="nav-text">My Images</span>
+            </a>
+            <a href="{{ url_for('groups') }}" class="nav-item">
+                <span class="nav-icon">📁</span><span class="nav-text">Image Groups</span>
+            </a>
+            <a href="{{ url_for('link_groups') }}" class="nav-item">
+                <span class="nav-icon">📁🔗</span><span class="nav-text">Link Groups</span>
+            </a>
+            <a href="{{ url_for('logout') }}" class="nav-item logout">
+                <span class="nav-icon">🚪</span><span class="nav-text">Logout</span>
+            </a>
+        </nav>
+        <div class="main-content">
+            <div class="top-bar">
+                <div style="display:flex;align-items:center;gap:15px;">
+                    <button class="menu-toggle" onclick="toggleSidebar()">☰</button>
+                    <h1>👋 Welcome, <span>TORIKUL</span></h1>
+                </div>
+                <div class="user-info">📅 {{ now.strftime('%B %d, %Y') }}</div>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">📸</div>
+                    <div class="stat-number">{{ total_images }}</div>
+                    <div class="stat-label">Total Images</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">🔗</div>
+                    <div class="stat-number">{{ total_links }}</div>
+                    <div class="stat-label">Total Links</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📁</div>
+                    <div class="stat-number">{{ total_groups }}</div>
+                    <div class="stat-label">Image Groups</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📁🔗</div>
+                    <div class="stat-number">{{ total_link_groups }}</div>
+                    <div class="stat-label">Link Groups</div>
+                </div>
+            </div>
+            <h2 class="section-title">🚀 Quick Actions</h2>
+            <div class="upload-grid">
+                <a href="{{ url_for('upload') }}" class="upload-card">
+                    <div class="uc-icon">📸</div>
+                    <div class="uc-title">Single Image</div>
+                    <div class="uc-desc">Upload & get URL + QR</div>
+                </a>
+                <a href="{{ url_for('multiple_upload') }}" class="upload-card">
+                    <div class="uc-icon">📸📸</div>
+                    <div class="uc-title">Multiple Images</div>
+                    <div class="uc-desc">Create image group</div>
+                </a>
+                <a href="{{ url_for('link_qr') }}" class="upload-card">
+                    <div class="uc-icon">🔗</div>
+                    <div class="uc-title">Link to QR</div>
+                    <div class="uc-desc">Convert any URL to QR</div>
+                </a>
+                <a href="{{ url_for('multiple_link_qr') }}" class="upload-card">
+                    <div class="uc-icon">🔗🔗</div>
+                    <div class="uc-title">Multiple Links</div>
+                    <div class="uc-desc">Create link group</div>
+                </a>
+                <a href="{{ url_for('gallery') }}" class="upload-card">
+                    <div class="uc-icon">🖼️</div>
+                    <div class="uc-title">My Images</div>
+                    <div class="uc-desc">View all uploaded images</div>
+                </a>
+                <a href="{{ url_for('groups') }}" class="upload-card">
+                    <div class="uc-icon">📁</div>
+                    <div class="uc-title">Image Groups</div>
+                    <div class="uc-desc">Manage your image groups</div>
+                </a>
+            </div>
+            <div style="margin-top:40px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;padding:20px;">
+                🔨 Created by TORIKUL | 🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v4.0
+            </div>
+        </div>
+    </div>
+    <div class="toast-container" id="toastContainer"></div>
+    <script>
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('open');
+        }
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 3000);
+        }
+        document.addEventListener('click', function(e) {
+            const sidebar = document.getElementById('sidebar');
+            const toggle = document.querySelector('.menu-toggle');
+            if (window.innerWidth <= 768 && sidebar.classList.contains('open') && 
+                !sidebar.contains(e.target) && !toggle.contains(e.target)) {
+                sidebar.classList.remove('open');
+            }
+        });
+        {% if msg %}showToast('{{ msg }}', '{{ msg_type or "success" }}');{% endif %}
+    </script>
+</body>
+</html>
+'''
 
+# ============ SINGLE UPLOAD TEMPLATE ============
+
+UPLOAD_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Single Upload - TORIKUL IMAGE • LINK • QR SYSTEM</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a1a;
+            min-height: 100vh;
+            color: #fff;
+        }
+        .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 15px; }
+        .header h1 { font-size: 1.8em; }
+        .header h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .btn-back {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            color: #fff;
+            text-decoration: none;
+            transition: all 0.3s;
+        }
+        .btn-back:hover { background: rgba(255,255,255,0.12); }
+        .upload-area {
+            border: 3px dashed rgba(102, 126, 234, 0.3);
+            border-radius: 20px;
+            padding: 60px 20px;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.02);
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .upload-area:hover { border-color: #667eea; background: rgba(102, 126, 234, 0.05); }
+        .upload-area .icon { font-size: 4em; margin-bottom: 15px; }
+        .upload-area .text { font-size: 1.2em; color: rgba(255,255,255,0.6); }
+        .upload-area .sub { color: rgba(255,255,255,0.3); font-size: 0.9em; margin-top: 5px; }
+        #fileInput { display: none; }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 30px;
+        }
         .spinner {
-            border: 4px solid #f3f3f3;
+            border: 4px solid rgba(255,255,255,0.1);
             border-top: 4px solid #667eea;
             border-radius: 50%;
             width: 40px;
@@ -262,461 +683,1547 @@ INDEX_TEMPLATE = '''
             animation: spin 1s linear infinite;
             margin: 0 auto;
         }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .result-box {
+            display: none;
+            margin-top: 30px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 20px;
+            padding: 30px;
         }
-
-        .alert {
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-        }
-
-        .alert-success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-
-        .alert-error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-
-        .nav-buttons {
+        .result-box .preview { text-align: center; margin-bottom: 20px; }
+        .result-box .preview img { max-width: 100%; max-height: 400px; border-radius: 12px; }
+        .info-row {
             display: flex;
-            justify-content: center;
+            flex-wrap: wrap;
             gap: 15px;
-            margin-top: 20px;
+            margin: 10px 0;
+            padding: 12px 16px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 10px;
+            align-items: center;
         }
-
-        @media (max-width: 768px) {
-            .header h1 {
-                font-size: 2em;
-            }
-            
-            .upload-card {
-                padding: 20px;
-            }
-            
-            .preview-area {
-                grid-template-columns: 1fr;
-            }
+        .info-row .label { color: rgba(255,255,255,0.5); min-width: 100px; }
+        .info-row .value { word-break: break-all; flex: 1; color: #667eea; }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.95em;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #fff;
+            font-weight: 500;
+        }
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-primary:hover { transform: scale(1.05); box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3); }
+        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-success:hover { transform: scale(1.05); }
+        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-danger:hover { transform: scale(1.05); }
+        .btn-secondary { background: rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
+        .qr-container { text-align: center; padding: 15px; background: #fff; border-radius: 12px; display: inline-block; }
+        .qr-container img { max-width: 200px; }
+        .toast-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            padding: 14px 24px;
+            border-radius: 12px;
+            background: rgba(20, 20, 40, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 0.95em;
+            animation: slideIn 0.3s ease-out;
+        }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes slideIn {
+            from { transform: translateX(100px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(5px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background: #1a1a2e;
+            padding: 30px;
+            border-radius: 20px;
+            max-width: 400px;
+            width: 90%;
+            text-align: center;
+        }
+        .modal-content h3 { margin-bottom: 15px; }
+        .modal-content p { color: rgba(255,255,255,0.7); margin-bottom: 20px; }
+        .modal .btn-group { justify-content: center; }
+        @media (max-width: 600px) {
+            .container { padding: 15px; }
+            .header h1 { font-size: 1.3em; }
+            .upload-area { padding: 40px 15px; }
+            .result-box { padding: 20px; }
+            .info-row { flex-direction: column; align-items: flex-start; }
+            .info-row .label { min-width: auto; }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>📸 Photo to URL Generator</h1>
-            <p>আপলোড করুন আপনার ছবি, সাথে সাথে পেয়ে যান ডাউনলোড লিংক</p>
+            <h1>📸 <span>Single Image Upload</span></h1>
+            <a href="{{ url_for('dashboard') }}" class="btn-back">🏠 Dashboard</a>
         </div>
-
-        <div class="upload-card">
-            <div class="upload-area" onclick="document.getElementById('fileInput').click()">
-                <div class="upload-icon">📷</div>
-                <div class="upload-text">ক্লিক করুন ছবি নির্বাচন করতে</div>
-                <div class="upload-subtext">অথবা এখানে ড্র্যাগ করুন</div>
-                <input type="file" id="fileInput" multiple accept="image/*" onchange="handleFiles(this.files)">
-            </div>
-
-            <div id="loading" class="loading">
-                <div class="spinner"></div>
-                <p style="margin-top: 10px;">আপলোড হচ্ছে...</p>
-            </div>
-
-            <div id="preview" class="preview-area"></div>
+        
+        <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+            <div class="icon">📷</div>
+            <div class="text">Click to select an image</div>
+            <div class="sub">or drag & drop here</div>
+            <input type="file" id="fileInput" accept="image/*" onchange="handleFile(this.files[0])">
         </div>
-
-        <div id="result" class="result-card" style="display: none;">
-            <h3 class="result-title">✅ জেনারেটেড লিংকসমূহ</h3>
-            <div id="linkList"></div>
-            <div class="nav-buttons">
-                <button class="btn" onclick="window.location.href='/gallery'">🎨 গ্যালারি দেখুন</button>
-                <button class="btn btn-secondary" onclick="resetForm()">🔄 নতুন করে আপলোড করুন</button>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p style="margin-top:15px;">Uploading & generating QR code...</p>
+        </div>
+        
+        <div class="result-box" id="resultBox">
+            <div class="preview">
+                <img id="previewImg" alt="Image Preview">
+            </div>
+            <div class="info-row">
+                <span class="label">📄 Filename</span>
+                <span class="value" id="fileName">-</span>
+            </div>
+            <div class="info-row">
+                <span class="label">📦 Size</span>
+                <span class="value" id="fileSize">-</span>
+            </div>
+            <div class="info-row">
+                <span class="label">🔗 Image URL</span>
+                <span class="value" id="imageUrl">-</span>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="copyLink()">📋 Copy Link</button>
+                <button class="btn btn-success" onclick="downloadQR()">⬇️ Download QR</button>
+                <button class="btn btn-danger" onclick="deleteImage()">🗑️ Delete Image</button>
+            </div>
+            <div style="margin-top:20px;text-align:center;">
+                <div class="qr-container">
+                    <p style="color:#333;margin-bottom:10px;">🧾 QR Code</p>
+                    <img id="qrImg" alt="QR Code">
+                </div>
+            </div>
+        </div>
+        
+        <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
+            🔨 Created by TORIKUL
+        </div>
+    </div>
+    
+    <div class="toast-container" id="toastContainer"></div>
+    
+    <!-- Confirmation Modal -->
+    <div class="modal" id="confirmModal">
+        <div class="modal-content">
+            <h3>⚠️ Are You Sure?</h3>
+            <p>Do you really want to delete this image?</p>
+            <div class="btn-group">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-danger" id="confirmDelete">Delete</button>
             </div>
         </div>
     </div>
-
+    
     <script>
-        async function handleFiles(files) {
-            if (files.length === 0) return;
-            
-            const formData = new FormData();
-            for (let file of files) {
-                if (file.type.startsWith('image/')) {
-                    formData.append('photos', file);
-                }
-            }
+        let currentFile = null;
+        let currentFilename = null;
+        
+        function handleFile(file) {
+            if (!file) return;
+            currentFile = file;
             
             document.getElementById('loading').style.display = 'block';
+            document.getElementById('resultBox').style.display = 'none';
             
-            try {
-                const response = await fetch('/api/upload', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const data = await response.json();
-                
-                if (data.success) {
-                    displayPreview(data.files);
-                    displayLinks(data.files);
-                    document.getElementById('result').style.display = 'block';
+            const formData = new FormData();
+            formData.append('photos', file);
+            
+            fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success && data.files.length > 0) {
+                    const img = data.files[0];
+                    currentFilename = img.filename;
+                    document.getElementById('previewImg').src = img.url;
+                    document.getElementById('fileName').textContent = img.original_name;
+                    document.getElementById('fileSize').textContent = img.size;
+                    document.getElementById('imageUrl').textContent = img.url;
+                    
+                    fetch('/api/qr/' + img.filename)
+                        .then(res => res.json())
+                        .then(qrData => {
+                            document.getElementById('qrImg').src = 'data:image/png;base64,' + qrData.qr;
+                            document.getElementById('resultBox').style.display = 'block';
+                            document.getElementById('loading').style.display = 'none';
+                            showToast('✅ Image uploaded & QR generated!', 'success');
+                        });
                 }
-            } catch (error) {
-                console.error('Error:', error);
-                alert('আপলোড করতে সমস্যা হয়েছে!');
-            } finally {
+            })
+            .catch(err => {
                 document.getElementById('loading').style.display = 'none';
-            }
-        }
-        
-        function displayPreview(files) {
-            const preview = document.getElementById('preview');
-            preview.innerHTML = '';
-            
-            files.forEach(file => {
-                const card = document.createElement('div');
-                card.className = 'preview-card';
-                card.innerHTML = `
-                    <img src="${file.url}" class="preview-image" alt="${file.original_name}">
-                    <div class="preview-info">
-                        <div class="preview-name">${file.original_name.substring(0, 30)}</div>
-                        <div class="preview-size">📦 ${file.size}</div>
-                        <div class="url-link" onclick="copyToClipboard('${file.url}')">
-                            🔗 ক্লিক করে কপি করুন
-                        </div>
-                    </div>
-                `;
-                preview.appendChild(card);
+                showToast('❌ Upload failed!', 'error');
             });
         }
         
-        function displayLinks(files) {
-            const linkList = document.getElementById('linkList');
-            linkList.innerHTML = '';
-            
-            files.forEach((file, index) => {
-                const item = document.createElement('div');
-                item.className = 'link-item';
-                item.innerHTML = `
-                    <div class="link-url">${file.url}</div>
-                    <button class="copy-btn" onclick="copyToClipboard('${file.url}')">📋 কপি</button>
-                `;
-                linkList.appendChild(item);
+        function copyLink() {
+            const url = document.getElementById('imageUrl').textContent;
+            navigator.clipboard.writeText(url).then(() => {
+                showToast('✅ Link copied!', 'success');
+            }).catch(() => {
+                prompt('Copy this link:', url);
             });
         }
         
-        async function copyToClipboard(text) {
-            try {
-                await navigator.clipboard.writeText(text);
-                alert('✅ লিংক কপি হয়েছে!');
-            } catch (err) {
-                prompt('ম্যানুয়ালি কপি করুন:', text);
-            }
+        function downloadQR() {
+            const img = document.getElementById('qrImg');
+            const link = document.createElement('a');
+            link.download = 'qr_' + currentFilename + '.png';
+            link.href = img.src;
+            link.click();
+            showToast('✅ QR Code downloaded!', 'success');
         }
         
-        function resetForm() {
-            document.getElementById('fileInput').value = '';
-            document.getElementById('preview').innerHTML = '';
-            document.getElementById('result').style.display = 'none';
-            location.reload();
+        function deleteImage() {
+            document.getElementById('confirmModal').style.display = 'flex';
+            document.getElementById('confirmDelete').onclick = function() {
+                closeModal();
+                if (!currentFilename) return;
+                fetch('/api/delete/' + currentFilename, { method: 'DELETE' })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast('✅ Image deleted!', 'success');
+                            document.getElementById('resultBox').style.display = 'none';
+                            document.getElementById('fileInput').value = '';
+                        } else {
+                            showToast('❌ Delete failed!', 'error');
+                        }
+                    });
+            };
         }
         
-        // Drag and drop functionality
-        const dropZone = document.querySelector('.upload-area');
+        function closeModal() {
+            document.getElementById('confirmModal').style.display = 'none';
+        }
         
-        dropZone.addEventListener('dragover', (e) => {
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 3000);
+        }
+        
+        const dropArea = document.querySelector('.upload-area');
+        dropArea.addEventListener('dragover', (e) => {
             e.preventDefault();
-            dropZone.style.borderColor = '#764ba2';
-            dropZone.style.background = '#f0f2ff';
+            dropArea.style.borderColor = '#764ba2';
         });
-        
-        dropZone.addEventListener('dragleave', (e) => {
-            e.preventDefault();
-            dropZone.style.borderColor = '#667eea';
-            dropZone.style.background = '#f8f9ff';
+        dropArea.addEventListener('dragleave', () => {
+            dropArea.style.borderColor = 'rgba(102, 126, 234, 0.3)';
         });
-        
-        dropZone.addEventListener('drop', (e) => {
+        dropArea.addEventListener('drop', (e) => {
             e.preventDefault();
-            dropZone.style.borderColor = '#667eea';
-            dropZone.style.background = '#f8f9ff';
+            dropArea.style.borderColor = 'rgba(102, 126, 234, 0.3)';
             const files = e.dataTransfer.files;
-            handleFiles(files);
+            if (files.length > 0) handleFile(files[0]);
         });
     </script>
 </body>
 </html>
 '''
 
-# Gallery Template
-GALLERY_TEMPLATE = '''
+# ============ MULTIPLE UPLOAD TEMPLATE ============
+
+MULTIPLE_UPLOAD_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="bn">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ইমেজ গ্যালারি - Photo to URL Generator</title>
+    <title>Multiple Upload - TORIKUL IMAGE • LINK • QR SYSTEM</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #0a0a1a;
             min-height: 100vh;
-            padding: 20px;
+            color: #fff;
         }
-
-        .container {
-            max-width: 1400px;
+        .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 15px; }
+        .header h1 { font-size: 1.8em; }
+        .header h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .btn-back {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            color: #fff;
+            text-decoration: none;
+            transition: all 0.3s;
+        }
+        .btn-back:hover { background: rgba(255,255,255,0.12); }
+        .upload-area {
+            border: 3px dashed rgba(102, 126, 234, 0.3);
+            border-radius: 20px;
+            padding: 50px 20px;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.02);
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .upload-area:hover { border-color: #667eea; background: rgba(102, 126, 234, 0.05); }
+        .upload-area .icon { font-size: 3.5em; margin-bottom: 15px; }
+        .upload-area .text { font-size: 1.1em; color: rgba(255,255,255,0.6); }
+        .upload-area .sub { color: rgba(255,255,255,0.3); font-size: 0.9em; margin-top: 5px; }
+        #fileInput { display: none; }
+        .selected-files {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .file-tag {
+            background: rgba(102, 126, 234, 0.2);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .file-tag .remove { cursor: pointer; color: #ff6b6b; font-weight: bold; }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 30px;
+        }
+        .spinner {
+            border: 4px solid rgba(255,255,255,0.1);
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
             margin: 0 auto;
         }
-
-        .header {
-            background: white;
-            border-radius: 20px;
-            padding: 20px 30px;
-            margin-bottom: 30px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-        }
-
-        .header h1 {
-            color: #667eea;
-            font-size: 2em;
-        }
-
-        .stats {
-            color: #666;
-            font-size: 1.1em;
-        }
-
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .btn {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
+            padding: 10px 25px;
             border: none;
-            padding: 10px 20px;
-            font-size: 1em;
-            border-radius: 50px;
+            border-radius: 10px;
+            font-size: 0.95em;
             cursor: pointer;
-            text-decoration: none;
-            display: inline-block;
-            transition: transform 0.2s;
+            transition: all 0.3s;
+            color: #fff;
+            font-weight: 500;
         }
-
-        .btn:hover {
-            transform: scale(1.05);
-        }
-
-        .gallery-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 25px;
-        }
-
-        .gallery-card {
-            background: white;
-            border-radius: 15px;
-            overflow: hidden;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-            transition: transform 0.3s;
-            animation: fadeIn 0.5s ease-in;
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        .gallery-card:hover {
-            transform: translateY(-5px);
-        }
-
-        .image-container {
-            position: relative;
-            cursor: pointer;
-            overflow: hidden;
-            height: 250px;
-        }
-
-        .gallery-image {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            transition: transform 0.3s;
-        }
-
-        .gallery-card:hover .gallery-image {
-            transform: scale(1.1);
-        }
-
-        .overlay {
-            position: absolute;
-            bottom: -100%;
-            left: 0;
-            right: 0;
-            background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
-            padding: 20px;
-            transition: bottom 0.3s;
-        }
-
-        .gallery-card:hover .overlay {
-            bottom: 0;
-        }
-
-        .card-info {
-            padding: 15px;
-        }
-
-        .filename {
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 8px;
-            word-break: break-all;
-            font-size: 0.9em;
-        }
-
-        .meta {
-            color: #999;
-            font-size: 0.85em;
-            margin-bottom: 10px;
-        }
-
-        .url-box {
-            background: #f0f0f0;
-            padding: 10px;
-            border-radius: 8px;
-            font-size: 0.8em;
-            word-break: break-all;
-            margin-bottom: 10px;
-            cursor: pointer;
-        }
-
-        .button-group {
-            display: flex;
-            gap: 10px;
-            margin-top: 10px;
-        }
-
-        .btn-small {
-            flex: 1;
-            padding: 8px;
-            font-size: 0.85em;
-        }
-
-        .btn-danger {
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 80px 20px;
-            background: white;
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-primary:hover { transform: scale(1.05); box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3); }
+        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-success:hover { transform: scale(1.05); }
+        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-danger:hover { transform: scale(1.05); }
+        .btn-secondary { background: rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .result-box {
+            display: none;
+            margin-top: 30px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
             border-radius: 20px;
+            padding: 30px;
         }
-
-        .empty-icon {
-            font-size: 5em;
-            margin-bottom: 20px;
+        .result-box .group-info { margin-bottom: 20px; }
+        .result-box .group-info .label { color: rgba(255,255,255,0.5); }
+        .result-box .group-info .value { color: #667eea; word-break: break-all; }
+        .gallery-preview {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
         }
-
+        .gallery-preview .thumb {
+            background: rgba(255,255,255,0.03);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .gallery-preview .thumb img { width: 100%; height: 150px; object-fit: cover; }
+        .gallery-preview .thumb .name { padding: 8px; font-size: 0.75em; color: rgba(255,255,255,0.6); text-align: center; word-break: break-all; }
+        .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
+        .qr-container { text-align: center; padding: 15px; background: #fff; border-radius: 12px; display: inline-block; margin-top: 15px; }
+        .qr-container img { max-width: 200px; }
+        .toast-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            padding: 14px 24px;
+            border-radius: 12px;
+            background: rgba(20, 20, 40, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 0.95em;
+            animation: slideIn 0.3s ease-out;
+        }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes slideIn {
+            from { transform: translateX(100px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
         .modal {
             display: none;
             position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(5px);
             z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.9);
-            animation: fadeIn 0.3s;
+            justify-content: center;
+            align-items: center;
         }
-
         .modal-content {
-            position: relative;
-            margin: auto;
-            padding: 20px;
+            background: #1a1a2e;
+            padding: 30px;
+            border-radius: 20px;
+            max-width: 400px;
             width: 90%;
-            max-width: 90%;
-            top: 50%;
-            transform: translateY(-50%);
+            text-align: center;
         }
-
-        .modal-image {
-            width: 100%;
-            max-height: 80vh;
-            object-fit: contain;
-            border-radius: 10px;
-        }
-
-        .close {
-            position: absolute;
-            top: 20px;
-            right: 40px;
-            color: white;
-            font-size: 40px;
-            cursor: pointer;
-        }
-
-        @media (max-width: 768px) {
-            .gallery-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .header {
-                flex-direction: column;
-                text-align: center;
-            }
+        .modal-content h3 { margin-bottom: 15px; }
+        .modal-content p { color: rgba(255,255,255,0.7); margin-bottom: 20px; }
+        .modal .btn-group { justify-content: center; }
+        @media (max-width: 600px) {
+            .container { padding: 15px; }
+            .header h1 { font-size: 1.3em; }
+            .upload-area { padding: 30px 15px; }
+            .result-box { padding: 20px; }
+            .gallery-preview { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+            .gallery-preview .thumb img { height: 120px; }
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎨 ইমেজ গ্যালারি</h1>
-            <div class="stats">
-                📸 মোট ছবি: {{ images|length }} টি
-            </div>
-            <a href="/" class="btn">➕ নতুন ছবি আপলোড করুন</a>
+            <h1>📸📸 <span>Multiple Image Upload</span></h1>
+            <a href="{{ url_for('dashboard') }}" class="btn-back">🏠 Dashboard</a>
         </div>
+        
+        <div class="upload-area" onclick="document.getElementById('fileInput').click()">
+            <div class="icon">📸</div>
+            <div class="text">Click to select multiple images</div>
+            <div class="sub">or drag & drop here</div>
+            <input type="file" id="fileInput" accept="image/*" multiple onchange="handleFiles(this.files)">
+        </div>
+        
+        <div class="selected-files" id="selectedFiles"></div>
+        
+        <div style="margin-top:15px;display:flex;gap:10px;flex-wrap:wrap;">
+            <button class="btn btn-primary" onclick="uploadFiles()" id="uploadBtn">🚀 Create Image Group</button>
+            <button class="btn btn-secondary" onclick="clearFiles()">🗑️ Clear All</button>
+        </div>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p style="margin-top:15px;">Uploading & generating group QR code...</p>
+        </div>
+        
+        <div class="result-box" id="resultBox">
+            <div class="group-info">
+                <div><span class="label">📁 Group Name:</span> <span class="value" id="groupName">-</span></div>
+                <div><span class="label">📸 Images:</span> <span class="value" id="imageCount">-</span></div>
+                <div><span class="label">🔗 Group URL:</span> <span class="value" id="groupUrl">-</span></div>
+            </div>
+            <div class="gallery-preview" id="galleryPreview"></div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="copyGroupLink()">📋 Copy Group Link</button>
+                <button class="btn btn-success" onclick="downloadGroupQR()">⬇️ Download QR</button>
+                <button class="btn btn-danger" onclick="deleteGroup()">🗑️ Delete Group</button>
+                <button class="btn btn-secondary" onclick="location.reload()">➕ Add More Images</button>
+            </div>
+            <div style="text-align:center;">
+                <div class="qr-container">
+                    <p style="color:#333;margin-bottom:10px;">🧾 Group QR Code</p>
+                    <img id="groupQrImg" alt="Group QR Code">
+                </div>
+            </div>
+        </div>
+        
+        <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
+            🔨 Created by TORIKUL
+        </div>
+    </div>
+    
+    <div class="toast-container" id="toastContainer"></div>
+    
+    <div class="modal" id="confirmModal">
+        <div class="modal-content">
+            <h3>⚠️ Delete Entire Group?</h3>
+            <p>This will delete all images inside this group.</p>
+            <div class="btn-group">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-danger" id="confirmDelete">Delete Group</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let selectedFiles = [];
+        let currentGroupId = null;
+        let currentGroupUrl = '';
+        
+        function handleFiles(files) {
+            for (let file of files) {
+                if (file.type.startsWith('image/')) {
+                    selectedFiles.push(file);
+                    addFileTag(file);
+                }
+            }
+            document.getElementById('fileInput').value = '';
+            updateUploadBtn();
+        }
+        
+        function addFileTag(file) {
+            const container = document.getElementById('selectedFiles');
+            const tag = document.createElement('div');
+            tag.className = 'file-tag';
+            tag.innerHTML = `📸 ${file.name.substring(0, 20)} <span class="remove" onclick="removeFile('${file.name}')">✕</span>`;
+            tag.dataset.name = file.name;
+            container.appendChild(tag);
+        }
+        
+        function removeFile(name) {
+            selectedFiles = selectedFiles.filter(f => f.name !== name);
+            const container = document.getElementById('selectedFiles');
+            const tags = container.querySelectorAll('.file-tag');
+            tags.forEach(tag => {
+                if (tag.dataset.name === name) tag.remove();
+            });
+            updateUploadBtn();
+        }
+        
+        function clearFiles() {
+            selectedFiles = [];
+            document.getElementById('selectedFiles').innerHTML = '';
+            updateUploadBtn();
+        }
+        
+        function updateUploadBtn() {
+            const btn = document.getElementById('uploadBtn');
+            btn.textContent = selectedFiles.length > 0 ? `🚀 Create Group (${selectedFiles.length} images)` : '🚀 Create Image Group';
+            btn.disabled = selectedFiles.length === 0;
+        }
+        
+        function uploadFiles() {
+            if (selectedFiles.length === 0) return;
+            
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('resultBox').style.display = 'none';
+            
+            const formData = new FormData();
+            for (let file of selectedFiles) {
+                formData.append('photos', file);
+            }
+            
+            fetch('/api/multiple-upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    currentGroupId = data.group_id;
+                    currentGroupUrl = data.group_url;
+                    
+                    document.getElementById('groupName').textContent = data.group_name;
+                    document.getElementById('imageCount').textContent = data.count + ' images';
+                    document.getElementById('groupUrl').textContent = data.group_url;
+                    
+                    const preview = document.getElementById('galleryPreview');
+                    preview.innerHTML = '';
+                    data.files.forEach(img => {
+                        const div = document.createElement('div');
+                        div.className = 'thumb';
+                        div.innerHTML = `
+                            <img src="${img.url}" alt="${img.original_name}">
+                            <div class="name">${img.original_name.substring(0, 20)}</div>
+                        `;
+                        preview.appendChild(div);
+                    });
+                    
+                    fetch('/api/qr-group/' + data.group_id)
+                        .then(res => res.json())
+                        .then(qrData => {
+                            document.getElementById('groupQrImg').src = 'data:image/png;base64,' + qrData.qr;
+                            document.getElementById('resultBox').style.display = 'block';
+                            document.getElementById('loading').style.display = 'none';
+                            selectedFiles = [];
+                            document.getElementById('selectedFiles').innerHTML = '';
+                            updateUploadBtn();
+                            showToast('✅ Group created with ' + data.count + ' images!', 'success');
+                        });
+                }
+            })
+            .catch(err => {
+                document.getElementById('loading').style.display = 'none';
+                showToast('❌ Upload failed!', 'error');
+            });
+        }
+        
+        function copyGroupLink() {
+            const url = document.getElementById('groupUrl').textContent;
+            navigator.clipboard.writeText(url).then(() => {
+                showToast('✅ Group link copied!', 'success');
+            }).catch(() => {
+                prompt('Copy this link:', url);
+            });
+        }
+        
+        function downloadGroupQR() {
+            const img = document.getElementById('groupQrImg');
+            const link = document.createElement('a');
+            link.download = 'group_qr_' + currentGroupId + '.png';
+            link.href = img.src;
+            link.click();
+            showToast('✅ QR Code downloaded!', 'success');
+        }
+        
+        function deleteGroup() {
+            if (!currentGroupId) return;
+            document.getElementById('confirmModal').style.display = 'flex';
+            document.getElementById('confirmDelete').onclick = function() {
+                closeModal();
+                fetch('/api/delete-group/' + currentGroupId, { method: 'DELETE' })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast('✅ Group deleted!', 'success');
+                            document.getElementById('resultBox').style.display = 'none';
+                        } else {
+                            showToast('❌ Delete failed!', 'error');
+                        }
+                    });
+            };
+        }
+        
+        function closeModal() {
+            document.getElementById('confirmModal').style.display = 'none';
+        }
+        
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 3000);
+        }
+        
+        const dropArea = document.querySelector('.upload-area');
+        dropArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropArea.style.borderColor = '#764ba2';
+        });
+        dropArea.addEventListener('dragleave', () => {
+            dropArea.style.borderColor = 'rgba(102, 126, 234, 0.3)';
+        });
+        dropArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropArea.style.borderColor = 'rgba(102, 126, 234, 0.3)';
+            handleFiles(e.dataTransfer.files);
+        });
+    </script>
+</body>
+</html>
+'''
 
-        {% if images %}
-        <div class="gallery-grid">
-            {% for image in images %}
-            <div class="gallery-card">
-                <div class="image-container" onclick="openModal('{{ image.url }}')">
-                    <img src="{{ image.url }}" class="gallery-image" alt="{{ image.filename }}">
-                    <div class="overlay">
-                        <div class="url-box" onclick="event.stopPropagation(); copyToClipboard('{{ image.url }}')">
-                            🔗 ক্লিক করে URL কপি করুন
-                        </div>
+# ============ LINK TO QR TEMPLATE ============
+
+LINK_QR_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Link to QR - TORIKUL IMAGE • LINK • QR SYSTEM</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a1a;
+            min-height: 100vh;
+            color: #fff;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 15px; }
+        .header h1 { font-size: 1.8em; }
+        .header h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .btn-back {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            color: #fff;
+            text-decoration: none;
+            transition: all 0.3s;
+        }
+        .btn-back:hover { background: rgba(255,255,255,0.12); }
+        .input-area {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 16px;
+            padding: 30px;
+        }
+        .input-area label { display: block; color: rgba(255,255,255,0.7); margin-bottom: 8px; font-weight: 500; }
+        .input-area input {
+            width: 100%;
+            padding: 14px 20px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            color: #fff;
+            font-size: 1em;
+            transition: all 0.3s;
+            outline: none;
+        }
+        .input-area input:focus { border-color: #667eea; background: rgba(255, 255, 255, 0.08); }
+        .input-area input::placeholder { color: rgba(255, 255, 255, 0.3); }
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 12px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #fff;
+            font-weight: 500;
+        }
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-primary:hover { transform: scale(1.05); box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3); }
+        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-success:hover { transform: scale(1.05); }
+        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-danger:hover { transform: scale(1.05); }
+        .btn-secondary { background: rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
+        .input-row { display: flex; gap: 15px; margin-top: 15px; flex-wrap: wrap; }
+        .input-row input { flex: 1; min-width: 200px; }
+        .result-box {
+            display: none;
+            margin-top: 30px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 20px;
+            padding: 30px;
+        }
+        .qr-result {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 30px;
+            align-items: center;
+            justify-content: center;
+        }
+        .qr-result .info { flex: 1; min-width: 200px; }
+        .qr-result .info .url { color: #667eea; word-break: break-all; }
+        .qr-result .qr-box { text-align: center; padding: 15px; background: #fff; border-radius: 12px; }
+        .qr-result .qr-box img { max-width: 200px; }
+        .toast-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            padding: 14px 24px;
+            border-radius: 12px;
+            background: rgba(20, 20, 40, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 0.95em;
+            animation: slideIn 0.3s ease-out;
+        }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes slideIn {
+            from { transform: translateX(100px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .status-msg {
+            padding: 12px 16px;
+            border-radius: 10px;
+            margin-top: 10px;
+            display: none;
+        }
+        .status-msg.success { display: block; background: rgba(81, 207, 102, 0.15); border: 1px solid rgba(81, 207, 102, 0.2); color: #51cf66; }
+        .status-msg.error { display: block; background: rgba(255, 107, 107, 0.15); border: 1px solid rgba(255, 107, 107, 0.2); color: #ff6b6b; }
+        @media (max-width: 600px) {
+            .container { padding: 15px; }
+            .header h1 { font-size: 1.3em; }
+            .input-area { padding: 20px; }
+            .qr-result { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔗 <span>Link to QR Code</span></h1>
+            <a href="{{ url_for('dashboard') }}" class="btn-back">🏠 Dashboard</a>
+        </div>
+        
+        <div class="input-area">
+            <label>🔗 Enter any URL</label>
+            <div class="input-row">
+                <input type="text" id="linkInput" placeholder="https://example.com" oninput="validateLink()">
+                <button class="btn btn-primary" onclick="generateQR()">🧾 Generate QR</button>
+            </div>
+            <div class="status-msg" id="statusMsg"></div>
+        </div>
+        
+        <div class="result-box" id="resultBox">
+            <div class="qr-result">
+                <div class="info">
+                    <div><span style="color:rgba(255,255,255,0.5);">🔗 URL:</span> <span class="url" id="resultUrl">-</span></div>
+                    <div style="margin-top:10px;color:rgba(255,255,255,0.4);font-size:0.85em;">✅ Valid Link</div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="copyResultLink()">📋 Copy Link</button>
+                        <button class="btn btn-success" onclick="downloadResultQR()">⬇️ Download QR</button>
+                        <button class="btn btn-danger" onclick="deleteLink()">🗑️ Delete Link</button>
                     </div>
                 </div>
-                <div class="card-info">
-                    <div class="filename">📄 {{ image.filename[:30] }}{% if image.filename|length > 30 %}...{% endif %}</div>
-                    <div class="meta">📦 {{ image.size }} | 🕒 {{ image.upload_date }}</div>
-                    <div class="button-group">
-                        <button class="btn btn-small" onclick="copyToClipboard('{{ image.url }}')">📋 কপি URL</button>
-                        <button class="btn btn-small btn-danger" onclick="deleteImage('{{ image.filename }}')">🗑️ ডিলিট</button>
+                <div class="qr-box">
+                    <p style="color:#333;margin-bottom:10px;">🧾 QR Code</p>
+                    <img id="resultQrImg" alt="QR Code">
+                </div>
+            </div>
+        </div>
+        
+        <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
+            🔨 Created by TORIKUL
+        </div>
+    </div>
+    
+    <div class="toast-container" id="toastContainer"></div>
+    
+    <div class="modal" id="confirmModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);backdrop-filter:blur(5px);z-index:1000;justify-content:center;align-items:center;">
+        <div class="modal-content" style="background:#1a1a2e;padding:30px;border-radius:20px;max-width:400px;width:90%;text-align:center;">
+            <h3>⚠️ Are You Sure?</h3>
+            <p style="color:rgba(255,255,255,0.7);margin-bottom:20px;">Do you really want to delete this link?</p>
+            <div style="display:flex;gap:10px;justify-content:center;">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-danger" id="confirmDelete">Delete</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let currentLinkId = null;
+        let currentLinkUrl = '';
+        
+        function validateLink() {
+            const input = document.getElementById('linkInput');
+            const status = document.getElementById('statusMsg');
+            const url = input.value.trim();
+            
+            if (!url) {
+                status.className = 'status-msg';
+                status.textContent = '';
+                return;
+            }
+            
+            fetch('/api/validate-url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: url })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.valid) {
+                    status.className = 'status-msg success';
+                    status.textContent = '✅ Valid URL';
+                } else {
+                    status.className = 'status-msg error';
+                    status.textContent = '❌ Invalid URL. Please enter a valid URL (e.g., https://example.com)';
+                }
+            });
+        }
+        
+        function generateQR() {
+            const input = document.getElementById('linkInput');
+            const url = input.value.trim();
+            
+            if (!url) {
+                showToast('❌ Please enter a URL!', 'error');
+                return;
+            }
+            
+            document.getElementById('resultBox').style.display = 'none';
+            
+            fetch('/api/link-to-qr', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: url })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    currentLinkId = data.link_id;
+                    currentLinkUrl = data.url;
+                    document.getElementById('resultUrl').textContent = data.url;
+                    document.getElementById('resultQrImg').src = 'data:image/png;base64,' + data.qr;
+                    document.getElementById('resultBox').style.display = 'block';
+                    showToast('✅ QR Code generated!', 'success');
+                } else {
+                    showToast('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(err => {
+                showToast('❌ Failed to generate QR!', 'error');
+            });
+        }
+        
+        function copyResultLink() {
+            const url = document.getElementById('resultUrl').textContent;
+            navigator.clipboard.writeText(url).then(() => {
+                showToast('✅ Link copied!', 'success');
+            }).catch(() => {
+                prompt('Copy this link:', url);
+            });
+        }
+        
+        function downloadResultQR() {
+            const img = document.getElementById('resultQrImg');
+            const link = document.createElement('a');
+            link.download = 'qr_' + currentLinkId + '.png';
+            link.href = img.src;
+            link.click();
+            showToast('✅ QR Code downloaded!', 'success');
+        }
+        
+        function deleteLink() {
+            if (!currentLinkId) return;
+            document.getElementById('confirmModal').style.display = 'flex';
+            document.getElementById('confirmDelete').onclick = function() {
+                closeModal();
+                fetch('/api/delete-link/' + currentLinkId, { method: 'DELETE' })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast('✅ Link deleted!', 'success');
+                            document.getElementById('resultBox').style.display = 'none';
+                            document.getElementById('linkInput').value = '';
+                            document.getElementById('statusMsg').className = 'status-msg';
+                            document.getElementById('statusMsg').textContent = '';
+                            currentLinkId = null;
+                        } else {
+                            showToast('❌ Delete failed!', 'error');
+                        }
+                    });
+            };
+        }
+        
+        function closeModal() {
+            document.getElementById('confirmModal').style.display = 'none';
+        }
+        
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 3000);
+        }
+        
+        document.getElementById('linkInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') generateQR();
+        });
+    </script>
+</body>
+</html>
+'''
+
+# ============ MULTIPLE LINK QR TEMPLATE ============
+
+MULTIPLE_LINK_QR_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multiple Links to QR - TORIKUL IMAGE • LINK • QR SYSTEM</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a1a;
+            min-height: 100vh;
+            color: #fff;
+        }
+        .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 15px; }
+        .header h1 { font-size: 1.8em; }
+        .header h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .btn-back {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            color: #fff;
+            text-decoration: none;
+            transition: all 0.3s;
+        }
+        .btn-back:hover { background: rgba(255,255,255,0.12); }
+        .input-area {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 16px;
+            padding: 30px;
+        }
+        .input-area label { display: block; color: rgba(255,255,255,0.7); margin-bottom: 8px; font-weight: 500; }
+        .input-area textarea {
+            width: 100%;
+            padding: 14px 20px;
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            color: #fff;
+            font-size: 1em;
+            transition: all 0.3s;
+            outline: none;
+            min-height: 150px;
+            resize: vertical;
+            font-family: inherit;
+        }
+        .input-area textarea:focus { border-color: #667eea; background: rgba(255, 255, 255, 0.08); }
+        .input-area textarea::placeholder { color: rgba(255, 255, 255, 0.3); }
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 12px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #fff;
+            font-weight: 500;
+        }
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-primary:hover { transform: scale(1.05); box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3); }
+        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-success:hover { transform: scale(1.05); }
+        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-danger:hover { transform: scale(1.05); }
+        .btn-secondary { background: rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
+        .result-box {
+            display: none;
+            margin-top: 30px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 20px;
+            padding: 30px;
+        }
+        .result-box .group-info { margin-bottom: 20px; }
+        .result-box .group-info .label { color: rgba(255,255,255,0.5); }
+        .result-box .group-info .value { color: #667eea; word-break: break-all; }
+        .links-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .link-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 12px;
+            padding: 15px;
+        }
+        .link-card .link-url { color: #667eea; word-break: break-all; font-size: 0.85em; }
+        .link-card .qr-small { text-align: center; padding: 10px; background: #fff; border-radius: 8px; margin-top: 10px; }
+        .link-card .qr-small img { max-width: 120px; }
+        .link-card .btn-group-small { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+        .link-card .btn-small {
+            padding: 5px 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.75em;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #fff;
+        }
+        .btn-small-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-small-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-small-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .qr-container { text-align: center; padding: 15px; background: #fff; border-radius: 12px; display: inline-block; margin-top: 15px; }
+        .qr-container img { max-width: 200px; }
+        .toast-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            padding: 14px 24px;
+            border-radius: 12px;
+            background: rgba(20, 20, 40, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 0.95em;
+            animation: slideIn 0.3s ease-out;
+        }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes slideIn {
+            from { transform: translateX(100px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(5px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background: #1a1a2e;
+            padding: 30px;
+            border-radius: 20px;
+            max-width: 400px;
+            width: 90%;
+            text-align: center;
+        }
+        .modal-content h3 { margin-bottom: 15px; }
+        .modal-content p { color: rgba(255,255,255,0.7); margin-bottom: 20px; }
+        .modal .btn-group { justify-content: center; }
+        @media (max-width: 600px) {
+            .container { padding: 15px; }
+            .header h1 { font-size: 1.3em; }
+            .input-area { padding: 20px; }
+            .links-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔗🔗 <span>Multiple Links to QR</span></h1>
+            <a href="{{ url_for('dashboard') }}" class="btn-back">🏠 Dashboard</a>
+        </div>
+        
+        <div class="input-area">
+            <label>🔗 Enter multiple URLs (one per line)</label>
+            <textarea id="linkInput" placeholder="https://example.com&#10;https://youtube.com&#10;https://facebook.com"></textarea>
+            <div style="margin-top:15px;display:flex;gap:10px;flex-wrap:wrap;">
+                <button class="btn btn-primary" onclick="generateLinks()">🧾 Generate All QR</button>
+                <button class="btn btn-secondary" onclick="clearLinks()">🗑️ Clear All</button>
+            </div>
+        </div>
+        
+        <div class="result-box" id="resultBox">
+            <div class="group-info">
+                <div><span class="label">📁 Group Name:</span> <span class="value" id="groupName">-</span></div>
+                <div><span class="label">🔗 Links:</span> <span class="value" id="linkCount">-</span></div>
+                <div><span class="label">🔗 Group URL:</span> <span class="value" id="groupUrl">-</span></div>
+            </div>
+            <div class="links-grid" id="linksGrid"></div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="copyGroupLink()">📋 Copy Group Link</button>
+                <button class="btn btn-success" onclick="downloadGroupQR()">⬇️ Download QR</button>
+                <button class="btn btn-danger" onclick="deleteLinkGroup()">🗑️ Delete Group</button>
+                <button class="btn btn-secondary" onclick="location.reload()">➕ Add More Links</button>
+            </div>
+            <div style="text-align:center;">
+                <div class="qr-container">
+                    <p style="color:#333;margin-bottom:10px;">🧾 Group QR Code</p>
+                    <img id="groupQrImg" alt="Group QR Code">
+                </div>
+            </div>
+        </div>
+        
+        <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
+            🔨 Created by TORIKUL
+        </div>
+    </div>
+    
+    <div class="toast-container" id="toastContainer"></div>
+    
+    <div class="modal" id="confirmModal">
+        <div class="modal-content">
+            <h3>⚠️ Delete Entire Group?</h3>
+            <p>This will delete all links inside this group.</p>
+            <div class="btn-group">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-danger" id="confirmDelete">Delete Group</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let currentGroupId = null;
+        let currentGroupUrl = '';
+        
+        function generateLinks() {
+            const textarea = document.getElementById('linkInput');
+            const lines = textarea.value.split('\\n').map(s => s.trim()).filter(s => s);
+            
+            if (lines.length === 0) {
+                showToast('❌ Please enter at least one URL!', 'error');
+                return;
+            }
+            
+            document.getElementById('resultBox').style.display = 'none';
+            
+            fetch('/api/multiple-links-to-qr', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ links: lines })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    currentGroupId = data.group_id;
+                    currentGroupUrl = data.group_url;
+                    
+                    document.getElementById('groupName').textContent = data.group_name;
+                    document.getElementById('linkCount').textContent = data.count + ' links';
+                    document.getElementById('groupUrl').textContent = data.group_url;
+                    
+                    const grid = document.getElementById('linksGrid');
+                    grid.innerHTML = '';
+                    data.links.forEach(link => {
+                        const card = document.createElement('div');
+                        card.className = 'link-card';
+                        card.innerHTML = `
+                            <div class="link-url">🔗 ${link.url}</div>
+                            <div class="qr-small">
+                                <img src="data:image/png;base64,${link.qr}" alt="QR Code">
+                            </div>
+                            <div class="btn-group-small">
+                                <button class="btn-small btn-small-primary" onclick="copyLink('${link.url}')">📋 Copy</button>
+                                <button class="btn-small btn-small-success" onclick="downloadLinkQR('${link.link_id}')">⬇️ QR</button>
+                                <button class="btn-small btn-small-danger" onclick="deleteLink('${link.link_id}')">🗑️ Delete</button>
+                            </div>
+                        `;
+                        grid.appendChild(card);
+                    });
+                    
+                    fetch('/api/qr-link-group/' + data.group_id)
+                        .then(res => res.json())
+                        .then(qrData => {
+                            document.getElementById('groupQrImg').src = 'data:image/png;base64,' + qrData.qr;
+                            document.getElementById('resultBox').style.display = 'block';
+                            showToast('✅ Group created with ' + data.count + ' links!', 'success');
+                        });
+                } else {
+                    showToast('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(err => {
+                showToast('❌ Failed to generate QR codes!', 'error');
+            });
+        }
+        
+        function copyLink(url) {
+            navigator.clipboard.writeText(url).then(() => {
+                showToast('✅ Link copied!', 'success');
+            }).catch(() => {
+                prompt('Copy this link:', url);
+            });
+        }
+        
+        function downloadLinkQR(linkId) {
+            fetch('/api/qr-link/' + linkId)
+                .then(res => res.json())
+                .then(data => {
+                    const link = document.createElement('a');
+                    link.download = 'qr_' + linkId + '.png';
+                    link.href = 'data:image/png;base64,' + data.qr;
+                    link.click();
+                    showToast('✅ QR Code downloaded!', 'success');
+                });
+        }
+        
+        function deleteLink(linkId) {
+            if (!confirm('Are you sure you want to delete this link?')) return;
+            fetch('/api/delete-link/' + linkId, { method: 'DELETE' })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast('✅ Link deleted!', 'success');
+                        location.reload();
+                    } else {
+                        showToast('❌ Delete failed!', 'error');
+                    }
+                });
+        }
+        
+        function copyGroupLink() {
+            const url = document.getElementById('groupUrl').textContent;
+            navigator.clipboard.writeText(url).then(() => {
+                showToast('✅ Group link copied!', 'success');
+            }).catch(() => {
+                prompt('Copy this link:', url);
+            });
+        }
+        
+        function downloadGroupQR() {
+            const img = document.getElementById('groupQrImg');
+            const link = document.createElement('a');
+            link.download = 'group_qr_' + currentGroupId + '.png';
+            link.href = img.src;
+            link.click();
+            showToast('✅ QR Code downloaded!', 'success');
+        }
+        
+        function deleteLinkGroup() {
+            if (!currentGroupId) return;
+            document.getElementById('confirmModal').style.display = 'flex';
+            document.getElementById('confirmDelete').onclick = function() {
+                closeModal();
+                fetch('/api/delete-link-group/' + currentGroupId, { method: 'DELETE' })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast('✅ Group deleted!', 'success');
+                            document.getElementById('resultBox').style.display = 'none';
+                        } else {
+                            showToast('❌ Delete failed!', 'error');
+                        }
+                    });
+            };
+        }
+        
+        function clearLinks() {
+            document.getElementById('linkInput').value = '';
+        }
+        
+        function closeModal() {
+            document.getElementById('confirmModal').style.display = 'none';
+        }
+        
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 3000);
+        }
+    </script>
+</body>
+</html>
+'''
+
+# ============ GALLERY TEMPLATE ============
+
+GALLERY_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Images - TORIKUL IMAGE • LINK • QR SYSTEM</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a1a;
+            min-height: 100vh;
+            color: #fff;
+        }
+        .container { max-width: 1300px; margin: 0 auto; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 15px; }
+        .header h1 { font-size: 1.8em; }
+        .header h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .btn-back {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            color: #fff;
+            text-decoration: none;
+            transition: all 0.3s;
+        }
+        .btn-back:hover { background: rgba(255,255,255,0.12); }
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 25px;
+        }
+        .image-card {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 16px;
+            overflow: hidden;
+            transition: all 0.3s;
+        }
+        .image-card:hover { transform: translateY(-5px); background: rgba(255, 255, 255, 0.06); }
+        .image-card .img-wrap { height: 220px; overflow: hidden; }
+        .image-card .img-wrap img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.3s; }
+        .image-card:hover .img-wrap img { transform: scale(1.05); }
+        .image-card .info { padding: 15px; }
+        .image-card .info .name { font-weight: 500; word-break: break-all; font-size: 0.9em; }
+        .image-card .info .meta { color: rgba(255,255,255,0.4); font-size: 0.8em; margin: 5px 0; }
+        .image-card .info .url { color: #667eea; font-size: 0.75em; word-break: break-all; cursor: pointer; }
+        .image-card .btn-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .btn {
+            padding: 6px 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.8em;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #fff;
+        }
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-primary:hover { transform: scale(1.05); }
+        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-success:hover { transform: scale(1.05); }
+        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-danger:hover { transform: scale(1.05); }
+        .btn-secondary { background: rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+        }
+        .empty-state .icon { font-size: 4em; margin-bottom: 15px; }
+        .empty-state h2 { margin-bottom: 10px; }
+        .empty-state p { color: rgba(255,255,255,0.4); }
+        .toast-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            padding: 14px 24px;
+            border-radius: 12px;
+            background: rgba(20, 20, 40, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 0.95em;
+            animation: slideIn 0.3s ease-out;
+        }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes slideIn {
+            from { transform: translateX(100px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(5px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background: #1a1a2e;
+            padding: 30px;
+            border-radius: 20px;
+            max-width: 400px;
+            width: 90%;
+            text-align: center;
+        }
+        .modal-content h3 { margin-bottom: 15px; }
+        .modal-content p { color: rgba(255,255,255,0.7); margin-bottom: 20px; }
+        .modal .btn-group { justify-content: center; }
+        @media (max-width: 600px) {
+            .container { padding: 15px; }
+            .header h1 { font-size: 1.3em; }
+            .gallery-grid { grid-template-columns: 1fr; }
+            .image-card .img-wrap { height: 180px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🖼️ <span>My Images</span></h1>
+            <div>
+                <a href="{{ url_for('upload') }}" class="btn-back" style="margin-right:10px;">📸 Upload</a>
+                <a href="{{ url_for('dashboard') }}" class="btn-back">🏠 Dashboard</a>
+            </div>
+        </div>
+        
+        {% if images %}
+        <div class="gallery-grid">
+            {% for img in images %}
+            <div class="image-card" data-filename="{{ img.filename }}">
+                <div class="img-wrap">
+                    <img src="{{ img.url }}" alt="{{ img.filename }}">
+                </div>
+                <div class="info">
+                    <div class="name">{{ img.original_name[:35] }}{% if img.original_name|length > 35 %}...{% endif %}</div>
+                    <div class="meta">📦 {{ img.size }} | 🕒 {{ img.upload_date }}</div>
+                    <div class="url" onclick="copyToClipboard('{{ img.url }}')">🔗 {{ img.url[:50] }}...</div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="copyToClipboard('{{ img.url }}')">📋 Copy</button>
+                        <button class="btn btn-success" onclick="downloadQR('{{ img.filename }}')">🧾 QR</button>
+                        <button class="btn btn-danger" onclick="deleteImage('{{ img.filename }}')">🗑️ Delete</button>
                     </div>
                 </div>
             </div>
@@ -724,130 +2231,1337 @@ GALLERY_TEMPLATE = '''
         </div>
         {% else %}
         <div class="empty-state">
-            <div class="empty-icon">📭</div>
-            <h2>কোনো ছবি নেই!</h2>
-            <p style="margin: 20px 0; color: #666;">প্রথমে কিছু ছবি আপলোড করুন</p>
-            <a href="/" class="btn">📸 ছবি আপলোড করুন</a>
+            <div class="icon">📭</div>
+            <h2>No Images Yet</h2>
+            <p>Upload your first image to get started!</p>
+            <a href="{{ url_for('upload') }}" class="btn btn-primary" style="display:inline-block;margin-top:20px;padding:12px 30px;font-size:1em;text-decoration:none;">📸 Upload Image</a>
         </div>
         {% endif %}
-    </div>
-
-    <div id="imageModal" class="modal">
-        <span class="close" onclick="closeModal()">&times;</span>
-        <div class="modal-content">
-            <img id="modalImage" class="modal-image">
+        
+        <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
+            🔨 Created by TORIKUL | Total: {{ images|length }} images
         </div>
     </div>
-
+    
+    <div class="toast-container" id="toastContainer"></div>
+    
+    <div class="modal" id="confirmModal">
+        <div class="modal-content">
+            <h3>⚠️ Are You Sure?</h3>
+            <p>Do you really want to delete this image?</p>
+            <div class="btn-group">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-danger" id="confirmDelete">Delete</button>
+            </div>
+        </div>
+    </div>
+    
     <script>
+        let deleteTarget = null;
+        
         function copyToClipboard(text) {
             navigator.clipboard.writeText(text).then(() => {
-                alert('✅ URL কপি হয়েছে!');
+                showToast('✅ Link copied!', 'success');
             }).catch(() => {
-                prompt('ম্যানুয়ালি কপি করুন:', text);
+                prompt('Copy this link:', text);
             });
         }
         
-        function openModal(url) {
-            document.getElementById('modalImage').src = url;
-            document.getElementById('imageModal').style.display = 'block';
+        function downloadQR(filename) {
+            fetch('/api/qr/' + filename)
+                .then(res => res.json())
+                .then(data => {
+                    const link = document.createElement('a');
+                    link.download = 'qr_' + filename + '.png';
+                    link.href = 'data:image/png;base64,' + data.qr;
+                    link.click();
+                    showToast('✅ QR Code downloaded!', 'success');
+                });
+        }
+        
+        function deleteImage(filename) {
+            deleteTarget = filename;
+            document.getElementById('confirmModal').style.display = 'flex';
+            document.getElementById('confirmDelete').onclick = function() {
+                closeModal();
+                if (!deleteTarget) return;
+                fetch('/api/delete/' + deleteTarget, { method: 'DELETE' })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast('✅ Image deleted!', 'success');
+                            const card = document.querySelector(`.image-card[data-filename="${deleteTarget}"]`);
+                            if (card) card.remove();
+                        } else {
+                            showToast('❌ Delete failed!', 'error');
+                        }
+                    });
+            };
         }
         
         function closeModal() {
-            document.getElementById('imageModal').style.display = 'none';
+            document.getElementById('confirmModal').style.display = 'none';
         }
         
-        async function deleteImage(filename) {
-            if (confirm('আপনি কি এই ছবিটি ডিলিট করতে চান?')) {
-                try {
-                    const response = await fetch('/delete/' + filename, {
-                        method: 'DELETE'
-                    });
-                    const data = await response.json();
-                    if (data.success) {
-                        alert('✅ ছবি ডিলিট হয়েছে!');
-                        location.reload();
-                    } else {
-                        alert('❌ ডিলিট করতে সমস্যা হয়েছে!');
-                    }
-                } catch (error) {
-                    alert('❌ ডিলিট করতে সমস্যা হয়েছে!');
-                }
-            }
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 3000);
         }
-        
-        // Close modal with ESC key
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                closeModal();
-            }
-        });
     </script>
 </body>
 </html>
 '''
 
-# Home page with upload form
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    generated_links = []
-    uploaded_files_info = []
-    
-    if request.method == 'POST':
-        # Get multiple files
-        files = request.files.getlist('photos')
+# ============ IMAGE GROUPS TEMPLATE ============
+
+GROUPS_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Groups - TORIKUL IMAGE • LINK • QR SYSTEM</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a1a;
+            min-height: 100vh;
+            color: #fff;
+        }
+        .container { max-width: 1300px; margin: 0 auto; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 15px; }
+        .header h1 { font-size: 1.8em; }
+        .header h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .btn-back {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            color: #fff;
+            text-decoration: none;
+            transition: all 0.3s;
+        }
+        .btn-back:hover { background: rgba(255,255,255,0.12); }
+        .groups-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 25px;
+        }
+        .group-card {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 16px;
+            overflow: hidden;
+            transition: all 0.3s;
+        }
+        .group-card:hover { transform: translateY(-5px); background: rgba(255, 255, 255, 0.06); }
+        .group-card .thumb-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 2px;
+            height: 150px;
+        }
+        .group-card .thumb-grid img { width: 100%; height: 100%; object-fit: cover; }
+        .group-card .thumb-grid .more { display: flex; justify-content: center; align-items: center; background: rgba(102, 126, 234, 0.2); font-size: 1.2em; }
+        .group-card .info { padding: 15px; }
+        .group-card .info .name { font-weight: 600; font-size: 1.1em; }
+        .group-card .info .meta { color: rgba(255,255,255,0.4); font-size: 0.85em; margin: 5px 0; }
+        .group-card .info .url { color: #667eea; font-size: 0.75em; word-break: break-all; cursor: pointer; }
+        .group-card .btn-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .btn {
+            padding: 6px 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.8em;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #fff;
+        }
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-primary:hover { transform: scale(1.05); }
+        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-success:hover { transform: scale(1.05); }
+        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-danger:hover { transform: scale(1.05); }
+        .btn-secondary { background: rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+        }
+        .empty-state .icon { font-size: 4em; margin-bottom: 15px; }
+        .empty-state h2 { margin-bottom: 10px; }
+        .empty-state p { color: rgba(255,255,255,0.4); }
+        .toast-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            padding: 14px 24px;
+            border-radius: 12px;
+            background: rgba(20, 20, 40, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 0.95em;
+            animation: slideIn 0.3s ease-out;
+        }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes slideIn {
+            from { transform: translateX(100px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(5px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background: #1a1a2e;
+            padding: 30px;
+            border-radius: 20px;
+            max-width: 400px;
+            width: 90%;
+            text-align: center;
+        }
+        .modal-content h3 { margin-bottom: 15px; }
+        .modal-content p { color: rgba(255,255,255,0.7); margin-bottom: 20px; }
+        .modal .btn-group { justify-content: center; }
+        @media (max-width: 600px) {
+            .container { padding: 15px; }
+            .header h1 { font-size: 1.3em; }
+            .groups-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📁 <span>Image Groups</span></h1>
+            <div>
+                <a href="{{ url_for('multiple_upload') }}" class="btn-back" style="margin-right:10px;">📸 New Group</a>
+                <a href="{{ url_for('dashboard') }}" class="btn-back">🏠 Dashboard</a>
+            </div>
+        </div>
         
-        for file in files:
-            if file and file.filename != '' and allowed_file(file.filename):
-                # Create unique filename
-                ext = file.filename.rsplit('.', 1)[1].lower()
-                unique_name = f"{uuid.uuid4().hex}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{ext}"
-                
-                # Save file to uploads folder
-                file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
-                file.save(file_path)
-                
-                # Get file size
-                file_size = get_file_size(file_path)
-                
-                # Create photo URL
-                full_url = request.host_url + 'image/' + unique_name
-                generated_links.append(full_url)
-                
-                # Store file info for display
-                uploaded_files_info.append({
-                    'original_name': file.filename,
-                    'url': full_url,
-                    'size': file_size,
-                    'type': ext.upper()
-                })
+        {% if groups %}
+        <div class="groups-grid">
+            {% for gid, group in groups.items() %}
+            <div class="group-card" data-groupid="{{ gid }}">
+                <div class="thumb-grid">
+                    {% for img in group.images[:3] %}
+                    <img src="{{ img.url }}" alt="{{ img.original_name }}">
+                    {% endfor %}
+                    {% if group.images|length > 3 %}
+                    <div class="more">+{{ group.images|length - 3 }}</div>
+                    {% endif %}
+                </div>
+                <div class="info">
+                    <div class="name">📁 {{ group.name }}</div>
+                    <div class="meta">📸 {{ group.image_count }} images | 🕒 {{ group.created_at }}</div>
+                    <div class="url" onclick="copyToClipboard('{{ group.url }}')">🔗 {{ group.url }}</div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="copyToClipboard('{{ group.url }}')">📋 Copy Link</button>
+                        <button class="btn btn-success" onclick="downloadGroupQR('{{ gid }}')">🧾 QR</button>
+                        <button class="btn btn-secondary" onclick="window.open('{{ group.url }}', '_blank')">👁️ View</button>
+                        <button class="btn btn-danger" onclick="deleteGroup('{{ gid }}')">🗑️ Delete</button>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="icon">📭</div>
+            <h2>No Groups Yet</h2>
+            <p>Create your first image group by uploading multiple images!</p>
+            <a href="{{ url_for('multiple_upload') }}" class="btn btn-primary" style="display:inline-block;margin-top:20px;padding:12px 30px;font-size:1em;text-decoration:none;">📸 Create Group</a>
+        </div>
+        {% endif %}
+        
+        <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
+            🔨 Created by TORIKUL | Total: {{ groups|length }} groups
+        </div>
+    </div>
     
-    return render_template_string(INDEX_TEMPLATE, links=generated_links, files_info=uploaded_files_info)
+    <div class="toast-container" id="toastContainer"></div>
+    
+    <div class="modal" id="confirmModal">
+        <div class="modal-content">
+            <h3>⚠️ Delete Entire Group?</h3>
+            <p>This will delete all images inside this group.</p>
+            <div class="btn-group">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-danger" id="confirmDelete">Delete Group</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let deleteTarget = null;
+        
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showToast('✅ Link copied!', 'success');
+            }).catch(() => {
+                prompt('Copy this link:', text);
+            });
+        }
+        
+        function downloadGroupQR(groupId) {
+            fetch('/api/qr-group/' + groupId)
+                .then(res => res.json())
+                .then(data => {
+                    const link = document.createElement('a');
+                    link.download = 'group_qr_' + groupId + '.png';
+                    link.href = 'data:image/png;base64,' + data.qr;
+                    link.click();
+                    showToast('✅ QR Code downloaded!', 'success');
+                });
+        }
+        
+        function deleteGroup(groupId) {
+            deleteTarget = groupId;
+            document.getElementById('confirmModal').style.display = 'flex';
+            document.getElementById('confirmDelete').onclick = function() {
+                closeModal();
+                if (!deleteTarget) return;
+                fetch('/api/delete-group/' + deleteTarget, { method: 'DELETE' })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast('✅ Group deleted!', 'success');
+                            const card = document.querySelector(`.group-card[data-groupid="${deleteTarget}"]`);
+                            if (card) card.remove();
+                        } else {
+                            showToast('❌ Delete failed!', 'error');
+                        }
+                    });
+            };
+        }
+        
+        function closeModal() {
+            document.getElementById('confirmModal').style.display = 'none';
+        }
+        
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 3000);
+        }
+    </script>
+</body>
+</html>
+'''
 
-# Serve images from uploads folder
-@app.route('/image/<filename>')
-def serve_image(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+# ============ LINK GROUPS TEMPLATE ============
 
-# API endpoint for AJAX uploads
+LINK_GROUPS_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Link Groups - TORIKUL IMAGE • LINK • QR SYSTEM</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a1a;
+            min-height: 100vh;
+            color: #fff;
+        }
+        .container { max-width: 1300px; margin: 0 auto; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 15px; }
+        .header h1 { font-size: 1.8em; }
+        .header h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .btn-back {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            color: #fff;
+            text-decoration: none;
+            transition: all 0.3s;
+        }
+        .btn-back:hover { background: rgba(255,255,255,0.12); }
+        .groups-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 25px;
+        }
+        .group-card {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 16px;
+            overflow: hidden;
+            transition: all 0.3s;
+            padding: 20px;
+        }
+        .group-card:hover { transform: translateY(-5px); background: rgba(255, 255, 255, 0.06); }
+        .group-card .name { font-weight: 600; font-size: 1.1em; }
+        .group-card .meta { color: rgba(255,255,255,0.4); font-size: 0.85em; margin: 5px 0; }
+        .group-card .url { color: #667eea; font-size: 0.75em; word-break: break-all; cursor: pointer; }
+        .group-card .links-preview {
+            margin: 10px 0;
+            padding: 10px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+        .group-card .links-preview .link-item {
+            font-size: 0.8em;
+            color: rgba(255,255,255,0.6);
+            padding: 3px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+            word-break: break-all;
+        }
+        .group-card .btn-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .btn {
+            padding: 6px 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.8em;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #fff;
+        }
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-primary:hover { transform: scale(1.05); }
+        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-success:hover { transform: scale(1.05); }
+        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-danger:hover { transform: scale(1.05); }
+        .btn-secondary { background: rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+        }
+        .empty-state .icon { font-size: 4em; margin-bottom: 15px; }
+        .empty-state h2 { margin-bottom: 10px; }
+        .empty-state p { color: rgba(255,255,255,0.4); }
+        .toast-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            padding: 14px 24px;
+            border-radius: 12px;
+            background: rgba(20, 20, 40, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 0.95em;
+            animation: slideIn 0.3s ease-out;
+        }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes slideIn {
+            from { transform: translateX(100px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(5px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background: #1a1a2e;
+            padding: 30px;
+            border-radius: 20px;
+            max-width: 400px;
+            width: 90%;
+            text-align: center;
+        }
+        .modal-content h3 { margin-bottom: 15px; }
+        .modal-content p { color: rgba(255,255,255,0.7); margin-bottom: 20px; }
+        .modal .btn-group { justify-content: center; }
+        @media (max-width: 600px) {
+            .container { padding: 15px; }
+            .header h1 { font-size: 1.3em; }
+            .groups-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📁🔗 <span>Link Groups</span></h1>
+            <div>
+                <a href="{{ url_for('multiple_link_qr') }}" class="btn-back" style="margin-right:10px;">🔗 New Group</a>
+                <a href="{{ url_for('dashboard') }}" class="btn-back">🏠 Dashboard</a>
+            </div>
+        </div>
+        
+        {% if groups %}
+        <div class="groups-grid">
+            {% for gid, group in groups.items() %}
+            <div class="group-card" data-groupid="{{ gid }}">
+                <div class="name">📁🔗 {{ group.name }}</div>
+                <div class="meta">🔗 {{ group.link_count }} links | 🕒 {{ group.created_at }}</div>
+                <div class="url" onclick="copyToClipboard('{{ group.url }}')">🔗 {{ group.url }}</div>
+                <div class="links-preview">
+                    {% for link in group.links[:5] %}
+                    <div class="link-item">🔗 {{ link.url }}</div>
+                    {% endfor %}
+                    {% if group.links|length > 5 %}
+                    <div class="link-item" style="color:rgba(255,255,255,0.3);">... and {{ group.links|length - 5 }} more</div>
+                    {% endif %}
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="copyToClipboard('{{ group.url }}')">📋 Copy Link</button>
+                    <button class="btn btn-success" onclick="downloadGroupQR('{{ gid }}')">🧾 QR</button>
+                    <button class="btn btn-secondary" onclick="window.open('{{ group.url }}', '_blank')">👁️ View</button>
+                    <button class="btn btn-danger" onclick="deleteGroup('{{ gid }}')">🗑️ Delete</button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <div class="icon">📭</div>
+            <h2>No Link Groups Yet</h2>
+            <p>Create your first link group by adding multiple URLs!</p>
+            <a href="{{ url_for('multiple_link_qr') }}" class="btn btn-primary" style="display:inline-block;margin-top:20px;padding:12px 30px;font-size:1em;text-decoration:none;">🔗 Create Group</a>
+        </div>
+        {% endif %}
+        
+        <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
+            🔨 Created by TORIKUL | Total: {{ groups|length }} groups
+        </div>
+    </div>
+    
+    <div class="toast-container" id="toastContainer"></div>
+    
+    <div class="modal" id="confirmModal">
+        <div class="modal-content">
+            <h3>⚠️ Delete Entire Group?</h3>
+            <p>This will delete all links inside this group.</p>
+            <div class="btn-group">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-danger" id="confirmDelete">Delete Group</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let deleteTarget = null;
+        
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showToast('✅ Link copied!', 'success');
+            }).catch(() => {
+                prompt('Copy this link:', text);
+            });
+        }
+        
+        function downloadGroupQR(groupId) {
+            fetch('/api/qr-link-group/' + groupId)
+                .then(res => res.json())
+                .then(data => {
+                    const link = document.createElement('a');
+                    link.download = 'group_qr_' + groupId + '.png';
+                    link.href = 'data:image/png;base64,' + data.qr;
+                    link.click();
+                    showToast('✅ QR Code downloaded!', 'success');
+                });
+        }
+        
+        function deleteGroup(groupId) {
+            deleteTarget = groupId;
+            document.getElementById('confirmModal').style.display = 'flex';
+            document.getElementById('confirmDelete').onclick = function() {
+                closeModal();
+                if (!deleteTarget) return;
+                fetch('/api/delete-link-group/' + deleteTarget, { method: 'DELETE' })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast('✅ Group deleted!', 'success');
+                            const card = document.querySelector(`.group-card[data-groupid="${deleteTarget}"]`);
+                            if (card) card.remove();
+                        } else {
+                            showToast('❌ Delete failed!', 'error');
+                        }
+                    });
+            };
+        }
+        
+        function closeModal() {
+            document.getElementById('confirmModal').style.display = 'none';
+        }
+        
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 3000);
+        }
+    </script>
+</body>
+</html>
+'''
+
+# ============ GROUP VIEW TEMPLATE ============
+
+GROUP_VIEW_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ group.name }} - TORIKUL IMAGE • LINK • QR SYSTEM</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a1a;
+            min-height: 100vh;
+            color: #fff;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .header h1 { font-size: 1.8em; }
+        .header h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .btn-back {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            color: #fff;
+            text-decoration: none;
+            transition: all 0.3s;
+        }
+        .btn-back:hover { background: rgba(255,255,255,0.12); }
+        .group-meta {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 16px;
+            padding: 20px 25px;
+            margin-bottom: 30px;
+        }
+        .group-meta .info { display: flex; flex-wrap: wrap; gap: 20px; }
+        .group-meta .info div { color: rgba(255,255,255,0.6); }
+        .group-meta .info div strong { color: #fff; }
+        .group-meta .url { color: #667eea; word-break: break-all; margin-top: 10px; }
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        .gallery-item {
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 12px;
+            overflow: hidden;
+            transition: all 0.3s;
+        }
+        .gallery-item:hover { transform: translateY(-5px); background: rgba(255, 255, 255, 0.06); }
+        .gallery-item img { width: 100%; height: 200px; object-fit: cover; }
+        .gallery-item .name { padding: 10px; font-size: 0.85em; color: rgba(255,255,255,0.6); text-align: center; word-break: break-all; }
+        .btn {
+            padding: 8px 18px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9em;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #fff;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-primary:hover { transform: scale(1.05); }
+        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-success:hover { transform: scale(1.05); }
+        .btn-secondary { background: rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
+        .qr-container { text-align: center; padding: 15px; background: #fff; border-radius: 12px; display: inline-block; }
+        .qr-container img { max-width: 180px; }
+        .add-area {
+            margin-top: 20px;
+            padding: 20px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
+            border: 1px dashed rgba(102, 126, 234, 0.3);
+        }
+        .add-area input[type="file"] { display: none; }
+        .add-area .upload-btn {
+            padding: 10px 25px;
+            background: rgba(102, 126, 234, 0.2);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            border-radius: 10px;
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .add-area .upload-btn:hover { background: rgba(102, 126, 234, 0.3); }
+        .toast-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            padding: 14px 24px;
+            border-radius: 12px;
+            background: rgba(20, 20, 40, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 0.95em;
+            animation: slideIn 0.3s ease-out;
+        }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes slideIn {
+            from { transform: translateX(100px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @media (max-width: 600px) {
+            .container { padding: 15px; }
+            .header h1 { font-size: 1.3em; }
+            .gallery-grid { grid-template-columns: 1fr; }
+            .group-meta .info { flex-direction: column; gap: 10px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📁 <span>{{ group.name }}</span></h1>
+            <a href="{{ url_for('groups') }}" class="btn-back">📁 All Groups</a>
+        </div>
+        
+        <div class="group-meta">
+            <div class="info">
+                <div>📸 <strong>{{ group.image_count }}</strong> images</div>
+                <div>🕒 <strong>{{ group.created_at }}</strong></div>
+                <div>🆔 <strong>{{ group.id }}</strong></div>
+            </div>
+            <div class="url">🔗 {{ group.url }}</div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="copyToClipboard('{{ group.url }}')">📋 Copy Link</button>
+                <button class="btn btn-success" onclick="downloadGroupQR()">⬇️ Download QR</button>
+            </div>
+            <div style="margin-top:15px;">
+                <div class="qr-container">
+                    <p style="color:#333;margin-bottom:10px;">🧾 Group QR Code</p>
+                    <img id="groupQrImg" alt="QR Code">
+                </div>
+            </div>
+        </div>
+        
+        <div class="add-area">
+            <p style="margin-bottom:10px;color:rgba(255,255,255,0.6);">➕ Add More Images to this Group</p>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+                <button class="upload-btn" onclick="document.getElementById('addFileInput').click()">📸 Select Images</button>
+                <span id="addFileCount" style="color:rgba(255,255,255,0.4);font-size:0.9em;">No images selected</span>
+                <button class="btn btn-primary" onclick="addImagesToGroup()">📤 Upload to Group</button>
+            </div>
+            <input type="file" id="addFileInput" accept="image/*" multiple onchange="updateAddFiles(this.files)">
+            <div id="addFileList" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:5px;"></div>
+        </div>
+        
+        <div class="gallery-grid">
+            {% for img in group.images %}
+            <div class="gallery-item" data-filename="{{ img.filename }}">
+                <img src="{{ img.url }}" alt="{{ img.original_name }}">
+                <div class="name">{{ img.original_name }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        
+        <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
+            🔨 Created by TORIKUL
+        </div>
+    </div>
+    
+    <div class="toast-container" id="toastContainer"></div>
+    
+    <script>
+        let addFiles = [];
+        let groupId = '{{ group.id }}';
+        
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showToast('✅ Link copied!', 'success');
+            }).catch(() => {
+                prompt('Copy this link:', text);
+            });
+        }
+        
+        function downloadGroupQR() {
+            const img = document.getElementById('groupQrImg');
+            if (img.src) {
+                const link = document.createElement('a');
+                link.download = 'group_qr_{{ group.id }}.png';
+                link.href = img.src;
+                link.click();
+                showToast('✅ QR Code downloaded!', 'success');
+            }
+        }
+        
+        function updateAddFiles(files) {
+            addFiles = [];
+            for (let f of files) {
+                if (f.type.startsWith('image/')) {
+                    addFiles.push(f);
+                }
+            }
+            document.getElementById('addFileCount').textContent = addFiles.length + ' images selected';
+            
+            const list = document.getElementById('addFileList');
+            list.innerHTML = '';
+            addFiles.forEach((file, i) => {
+                const tag = document.createElement('span');
+                tag.style.cssText = 'background:rgba(102,126,234,0.2);padding:3px 12px;border-radius:15px;font-size:0.8em;';
+                tag.textContent = '📸 ' + file.name.substring(0, 20);
+                list.appendChild(tag);
+            });
+        }
+        
+        function addImagesToGroup() {
+            if (addFiles.length === 0) {
+                showToast('❌ Please select images!', 'error');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('group_id', groupId);
+            for (let file of addFiles) {
+                formData.append('photos', file);
+            }
+            
+            showToast('⏳ Uploading images...', 'success');
+            
+            fetch('/api/add-to-image-group', {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    showToast('✅ ' + data.count + ' images added to group!', 'success');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast('❌ ' + data.error, 'error');
+                }
+            })
+            .catch(err => {
+                showToast('❌ Upload failed!', 'error');
+            });
+        }
+        
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 3000);
+        }
+        
+        // Load QR code
+        fetch('/api/qr-group/{{ group.id }}')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('groupQrImg').src = 'data:image/png;base64,' + data.qr;
+            });
+    </script>
+</body>
+</html>
+'''
+
+# ============ LINK GROUP VIEW TEMPLATE ============
+
+LINK_GROUP_VIEW_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ group.name }} - TORIKUL IMAGE • LINK • QR SYSTEM</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a1a;
+            min-height: 100vh;
+            color: #fff;
+        }
+        .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .header h1 { font-size: 1.8em; }
+        .header h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .btn-back {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            color: #fff;
+            text-decoration: none;
+            transition: all 0.3s;
+        }
+        .btn-back:hover { background: rgba(255,255,255,0.12); }
+        .group-meta {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 16px;
+            padding: 20px 25px;
+            margin-bottom: 30px;
+        }
+        .group-meta .info { display: flex; flex-wrap: wrap; gap: 20px; }
+        .group-meta .info div { color: rgba(255,255,255,0.6); }
+        .group-meta .info div strong { color: #fff; }
+        .group-meta .url { color: #667eea; word-break: break-all; margin-top: 10px; }
+        .links-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+        .link-card {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 12px;
+            padding: 15px;
+        }
+        .link-card .link-url { color: #667eea; word-break: break-all; font-size: 0.85em; }
+        .link-card .qr-small { text-align: center; padding: 10px; background: #fff; border-radius: 8px; margin-top: 10px; }
+        .link-card .qr-small img { max-width: 120px; }
+        .btn {
+            padding: 8px 18px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9em;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #fff;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-primary:hover { transform: scale(1.05); }
+        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-success:hover { transform: scale(1.05); }
+        .btn-secondary { background: rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
+        .qr-container { text-align: center; padding: 15px; background: #fff; border-radius: 12px; display: inline-block; }
+        .qr-container img { max-width: 180px; }
+        .add-area {
+            margin-top: 20px;
+            padding: 20px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
+            border: 1px dashed rgba(102, 126, 234, 0.3);
+        }
+        .add-area input[type="text"] {
+            flex: 1;
+            padding: 10px 16px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            color: #fff;
+            outline: none;
+            min-width: 200px;
+        }
+        .add-area input[type="text"]:focus { border-color: #667eea; }
+        .toast-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            padding: 14px 24px;
+            border-radius: 12px;
+            background: rgba(20, 20, 40, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 0.95em;
+            animation: slideIn 0.3s ease-out;
+        }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes slideIn {
+            from { transform: translateX(100px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @media (max-width: 600px) {
+            .container { padding: 15px; }
+            .header h1 { font-size: 1.3em; }
+            .links-grid { grid-template-columns: 1fr; }
+            .group-meta .info { flex-direction: column; gap: 10px; }
+            .add-area .add-row { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📁🔗 <span>{{ group.name }}</span></h1>
+            <a href="{{ url_for('link_groups') }}" class="btn-back">📁 All Link Groups</a>
+        </div>
+        
+        <div class="group-meta">
+            <div class="info">
+                <div>🔗 <strong>{{ group.link_count }}</strong> links</div>
+                <div>🕒 <strong>{{ group.created_at }}</strong></div>
+                <div>🆔 <strong>{{ group.id }}</strong></div>
+            </div>
+            <div class="url">🔗 {{ group.url }}</div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="copyToClipboard('{{ group.url }}')">📋 Copy Link</button>
+                <button class="btn btn-success" onclick="downloadGroupQR()">⬇️ Download QR</button>
+            </div>
+            <div style="margin-top:15px;">
+                <div class="qr-container">
+                    <p style="color:#333;margin-bottom:10px;">🧾 Group QR Code</p>
+                    <img id="groupQrImg" alt="QR Code">
+                </div>
+            </div>
+        </div>
+        
+        <div class="add-area">
+            <p style="margin-bottom:10px;color:rgba(255,255,255,0.6);">➕ Add More Links to this Group</p>
+            <div class="add-row" style="display:flex;gap:10px;flex-wrap:wrap;">
+                <input type="text" id="addLinkInput" placeholder="https://example.com">
+                <button class="btn btn-primary" onclick="addLinkToGroup()">➕ Add Link</button>
+            </div>
+            <div id="addLinkStatus" style="margin-top:8px;color:rgba(255,255,255,0.4);font-size:0.85em;"></div>
+        </div>
+        
+        <div class="links-grid">
+            {% for link in group.links %}
+            <div class="link-card" data-linkid="{{ link.link_id }}">
+                <div class="link-url">🔗 {{ link.url }}</div>
+                <div class="qr-small">
+                    <img src="data:image/png;base64,{{ link.qr }}" alt="QR Code">
+                </div>
+                <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                    <button class="btn btn-primary" style="padding:4px 12px;font-size:0.8em;" onclick="copyToClipboard('{{ link.url }}')">📋 Copy</button>
+                    <button class="btn btn-success" style="padding:4px 12px;font-size:0.8em;" onclick="downloadLinkQR('{{ link.link_id }}')">⬇️ QR</button>
+                    <button class="btn btn-danger" style="padding:4px 12px;font-size:0.8em;" onclick="deleteLink('{{ link.link_id }}')">🗑️ Delete</button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        
+        <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
+            🔨 Created by TORIKUL
+        </div>
+    </div>
+    
+    <div class="toast-container" id="toastContainer"></div>
+    
+    <script>
+        let groupId = '{{ group.id }}';
+        
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showToast('✅ Link copied!', 'success');
+            }).catch(() => {
+                prompt('Copy this link:', text);
+            });
+        }
+        
+        function downloadGroupQR() {
+            const img = document.getElementById('groupQrImg');
+            if (img.src) {
+                const link = document.createElement('a');
+                link.download = 'group_qr_{{ group.id }}.png';
+                link.href = img.src;
+                link.click();
+                showToast('✅ QR Code downloaded!', 'success');
+            }
+        }
+        
+        function downloadLinkQR(linkId) {
+            fetch('/api/qr-link/' + linkId)
+                .then(res => res.json())
+                .then(data => {
+                    const link = document.createElement('a');
+                    link.download = 'qr_' + linkId + '.png';
+                    link.href = 'data:image/png;base64,' + data.qr;
+                    link.click();
+                    showToast('✅ QR Code downloaded!', 'success');
+                });
+        }
+        
+        function addLinkToGroup() {
+            const input = document.getElementById('addLinkInput');
+            const url = input.value.trim();
+            
+            if (!url) {
+                showToast('❌ Please enter a URL!', 'error');
+                return;
+            }
+            
+            document.getElementById('addLinkStatus').textContent = '⏳ Adding link...';
+            
+            fetch('/api/add-to-link-group', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ group_id: groupId, url: url })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    showToast('✅ Link added to group!', 'success');
+                    document.getElementById('addLinkStatus').textContent = '✅ Link added!';
+                    input.value = '';
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast('❌ ' + data.error, 'error');
+                    document.getElementById('addLinkStatus').textContent = '❌ ' + data.error;
+                }
+            })
+            .catch(err => {
+                showToast('❌ Failed to add link!', 'error');
+                document.getElementById('addLinkStatus').textContent = '❌ Failed to add link!';
+            });
+        }
+        
+        function deleteLink(linkId) {
+            if (!confirm('Are you sure you want to delete this link?')) return;
+            fetch('/api/delete-link/' + linkId, { method: 'DELETE' })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast('✅ Link deleted!', 'success');
+                        const card = document.querySelector(`.link-card[data-linkid="${linkId}"]`);
+                        if (card) card.remove();
+                    } else {
+                        showToast('❌ Delete failed!', 'error');
+                    }
+                });
+        }
+        
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 3000);
+        }
+        
+        document.getElementById('addLinkInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') addLinkToGroup();
+        });
+        
+        // Load group QR
+        fetch('/api/qr-link-group/{{ group.id }}')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('groupQrImg').src = 'data:image/png;base64,' + data.qr;
+            });
+    </script>
+</body>
+</html>
+'''
+
+# ============ ROUTES ============
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        
+        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            session['logged_in'] = True
+            session['username'] = username
+            return redirect(url_for('dashboard'))
+        elif username != ADMIN_USERNAME:
+            return render_template_string(LOGIN_TEMPLATE, error='❌ Invalid Username! Please try again.', username=username)
+        else:
+            return render_template_string(LOGIN_TEMPLATE, error='❌ Invalid Password! Please try again.', username=username)
+    
+    if session.get('logged_in'):
+        return redirect(url_for('dashboard'))
+    return render_template_string(LOGIN_TEMPLATE, error=None)
+
+@app.route('/logout')
+def logout():
+    session.clear()
+    return redirect(url_for('login'))
+
+@app.route('/')
+def home():
+    if session.get('logged_in'):
+        return redirect(url_for('dashboard'))
+    return redirect(url_for('login'))
+
+@app.route('/dashboard')
+@login_required
+def dashboard():
+    images = load_images()
+    groups = load_groups()
+    links = load_links()
+    link_groups = load_link_groups()
+    
+    # Count only non-group images
+    single_images = {k: v for k, v in images.items() if 'group_id' not in v}
+    
+    return render_template_string(DASHBOARD_TEMPLATE,
+        total_images=len(single_images),
+        total_links=len(links),
+        total_groups=len(groups),
+        total_link_groups=len(link_groups),
+        now=datetime.now()
+    )
+
+@app.route('/upload')
+@login_required
+def upload():
+    return render_template_string(UPLOAD_TEMPLATE)
+
+@app.route('/multiple-upload')
+@login_required
+def multiple_upload():
+    return render_template_string(MULTIPLE_UPLOAD_TEMPLATE)
+
+@app.route('/link-to-qr')
+@login_required
+def link_qr():
+    return render_template_string(LINK_QR_TEMPLATE)
+
+@app.route('/multiple-links-to-qr')
+@login_required
+def multiple_link_qr():
+    return render_template_string(MULTIPLE_LINK_QR_TEMPLATE)
+
+@app.route('/gallery')
+@login_required
+def gallery():
+    images_data = load_images()
+    images = []
+    for filename, data in images_data.items():
+        if 'group_id' not in data:
+            images.append({
+                'filename': filename,
+                'url': data['url'],
+                'original_name': data.get('filename', filename),
+                'size': data.get('size', 'Unknown'),
+                'upload_date': data.get('upload_date', 'Unknown')
+            })
+    return render_template_string(GALLERY_TEMPLATE, images=images)
+
+@app.route('/groups')
+@login_required
+def groups():
+    groups_data = load_groups()
+    return render_template_string(GROUPS_TEMPLATE, groups=groups_data)
+
+@app.route('/link-groups')
+@login_required
+def link_groups():
+    link_groups_data = load_link_groups()
+    return render_template_string(LINK_GROUPS_TEMPLATE, groups=link_groups_data)
+
+@app.route('/group/<group_id>')
+def view_group(group_id):
+    groups_data = load_groups()
+    if group_id not in groups_data:
+        return "Group not found", 404
+    return render_template_string(GROUP_VIEW_TEMPLATE, group=groups_data[group_id])
+
+@app.route('/link-group/<group_id>')
+def view_link_group(group_id):
+    link_groups_data = load_link_groups()
+    if group_id not in link_groups_data:
+        return "Link Group not found", 404
+    return render_template_string(LINK_GROUP_VIEW_TEMPLATE, group=link_groups_data[group_id])
+
+# ============ API ROUTES ============
+
 @app.route('/api/upload', methods=['POST'])
+@login_required
 def api_upload():
-    """JSON API for uploading files"""
     if 'photos' not in request.files:
         return jsonify({'error': 'No files uploaded'}), 400
     
     files = request.files.getlist('photos')
     uploaded_files = []
+    images_data = load_images()
     
     for file in files:
         if file and file.filename != '' and allowed_file(file.filename):
             ext = file.filename.rsplit('.', 1)[1].lower()
-            unique_name = f"{uuid.uuid4().hex}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{ext}"
+            unique_id = generate_unique_id()
+            unique_name = f"{unique_id}.{ext}"
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
             file.save(file_path)
             
             file_size = get_file_size(file_path)
             full_url = request.host_url + 'image/' + unique_name
+            
+            images_data[unique_name] = {
+                'filename': file.filename,
+                'url': full_url,
+                'size': file_size,
+                'type': ext.upper(),
+                'upload_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'file_path': file_path
+            }
             
             uploaded_files.append({
                 'original_name': file.filename,
@@ -857,61 +3571,435 @@ def api_upload():
                 'filename': unique_name
             })
     
+    save_images(images_data)
     return jsonify({'success': True, 'files': uploaded_files})
 
-# Delete uploaded file
-@app.route('/delete/<filename>', methods=['DELETE'])
-def delete_file(filename):
-    """Delete an uploaded file"""
+@app.route('/api/multiple-upload', methods=['POST'])
+@login_required
+def api_multiple_upload():
+    if 'photos' not in request.files:
+        return jsonify({'error': 'No files uploaded'}), 400
+    
+    files = request.files.getlist('photos')
+    if not files or files[0].filename == '':
+        return jsonify({'error': 'No files selected'}), 400
+    
+    group_id = generate_unique_id()
+    group_name = f"Image_Group_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    uploaded_files = []
+    images_data = load_images()
+    groups_data = load_groups()
+    
+    for file in files:
+        if file and file.filename != '' and allowed_file(file.filename):
+            ext = file.filename.rsplit('.', 1)[1].lower()
+            unique_id = generate_unique_id()
+            unique_name = f"{unique_id}.{ext}"
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
+            file.save(file_path)
+            
+            file_size = get_file_size(file_path)
+            full_url = request.host_url + 'image/' + unique_name
+            
+            images_data[unique_name] = {
+                'filename': file.filename,
+                'url': full_url,
+                'size': file_size,
+                'type': ext.upper(),
+                'upload_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'file_path': file_path,
+                'group_id': group_id
+            }
+            
+            uploaded_files.append({
+                'original_name': file.filename,
+                'url': full_url,
+                'size': file_size,
+                'type': ext.upper(),
+                'filename': unique_name
+            })
+    
+    group_url = request.host_url + 'group/' + group_id
+    groups_data[group_id] = {
+        'id': group_id,
+        'name': group_name,
+        'url': group_url,
+        'image_count': len(uploaded_files),
+        'images': uploaded_files,
+        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    
+    save_images(images_data)
+    save_groups(groups_data)
+    
+    return jsonify({
+        'success': True,
+        'group_id': group_id,
+        'group_url': group_url,
+        'group_name': group_name,
+        'files': uploaded_files,
+        'count': len(uploaded_files)
+    })
+
+@app.route('/api/add-to-image-group', methods=['POST'])
+@login_required
+def api_add_to_image_group():
+    group_id = request.form.get('group_id')
+    if not group_id:
+        return jsonify({'error': 'Group ID required'}), 400
+    
+    if 'photos' not in request.files:
+        return jsonify({'error': 'No files uploaded'}), 400
+    
+    files = request.files.getlist('photos')
+    groups_data = load_groups()
+    images_data = load_images()
+    
+    if group_id not in groups_data:
+        return jsonify({'error': 'Group not found'}), 404
+    
+    added = 0
+    for file in files:
+        if file and file.filename != '' and allowed_file(file.filename):
+            ext = file.filename.rsplit('.', 1)[1].lower()
+            unique_id = generate_unique_id()
+            unique_name = f"{unique_id}.{ext}"
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
+            file.save(file_path)
+            
+            file_size = get_file_size(file_path)
+            full_url = request.host_url + 'image/' + unique_name
+            
+            images_data[unique_name] = {
+                'filename': file.filename,
+                'url': full_url,
+                'size': file_size,
+                'type': ext.upper(),
+                'upload_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'file_path': file_path,
+                'group_id': group_id
+            }
+            
+            groups_data[group_id]['images'].append({
+                'original_name': file.filename,
+                'url': full_url,
+                'size': file_size,
+                'type': ext.upper(),
+                'filename': unique_name
+            })
+            added += 1
+    
+    groups_data[group_id]['image_count'] = len(groups_data[group_id]['images'])
+    save_images(images_data)
+    save_groups(groups_data)
+    
+    return jsonify({'success': True, 'count': added})
+
+@app.route('/api/link-to-qr', methods=['POST'])
+@login_required
+def api_link_to_qr():
+    data = request.get_json()
+    url = data.get('url', '').strip()
+    
+    if not url:
+        return jsonify({'success': False, 'error': 'URL is required'}), 400
+    
+    if not validate_url(url):
+        return jsonify({'success': False, 'error': 'Invalid URL format'}), 400
+    
+    link_id = generate_unique_id()
+    links_data = load_links()
+    
+    qr_base64 = generate_qr_code_base64(url)
+    
+    links_data[link_id] = {
+        'link_id': link_id,
+        'url': url,
+        'qr': qr_base64,
+        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    
+    save_links(links_data)
+    
+    return jsonify({
+        'success': True,
+        'link_id': link_id,
+        'url': url,
+        'qr': qr_base64
+    })
+
+@app.route('/api/multiple-links-to-qr', methods=['POST'])
+@login_required
+def api_multiple_links_to_qr():
+    data = request.get_json()
+    links = data.get('links', [])
+    
+    if not links:
+        return jsonify({'success': False, 'error': 'No links provided'}), 400
+    
+    valid_links = []
+    for url in links:
+        url = url.strip()
+        if url and validate_url(url):
+            valid_links.append(url)
+    
+    if not valid_links:
+        return jsonify({'success': False, 'error': 'No valid URLs found'}), 400
+    
+    group_id = generate_unique_id()
+    group_name = f"Link_Group_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    
+    link_groups_data = load_link_groups()
+    links_data = load_links()
+    
+    processed_links = []
+    for url in valid_links:
+        link_id = generate_unique_id()
+        qr_base64 = generate_qr_code_base64(url)
+        
+        links_data[link_id] = {
+            'link_id': link_id,
+            'url': url,
+            'qr': qr_base64,
+            'group_id': group_id,
+            'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        processed_links.append({
+            'link_id': link_id,
+            'url': url,
+            'qr': qr_base64
+        })
+    
+    group_url = request.host_url + 'link-group/' + group_id
+    link_groups_data[group_id] = {
+        'id': group_id,
+        'name': group_name,
+        'url': group_url,
+        'link_count': len(processed_links),
+        'links': processed_links,
+        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    
+    save_links(links_data)
+    save_link_groups(link_groups_data)
+    
+    return jsonify({
+        'success': True,
+        'group_id': group_id,
+        'group_url': group_url,
+        'group_name': group_name,
+        'links': processed_links,
+        'count': len(processed_links)
+    })
+
+@app.route('/api/add-to-link-group', methods=['POST'])
+@login_required
+def api_add_to_link_group():
+    data = request.get_json()
+    group_id = data.get('group_id')
+    url = data.get('url', '').strip()
+    
+    if not group_id:
+        return jsonify({'error': 'Group ID required'}), 400
+    
+    if not url:
+        return jsonify({'error': 'URL is required'}), 400
+    
+    if not validate_url(url):
+        return jsonify({'error': 'Invalid URL format'}), 400
+    
+    link_groups_data = load_link_groups()
+    links_data = load_links()
+    
+    if group_id not in link_groups_data:
+        return jsonify({'error': 'Group not found'}), 404
+    
+    link_id = generate_unique_id()
+    qr_base64 = generate_qr_code_base64(url)
+    
+    links_data[link_id] = {
+        'link_id': link_id,
+        'url': url,
+        'qr': qr_base64,
+        'group_id': group_id,
+        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    
+    link_groups_data[group_id]['links'].append({
+        'link_id': link_id,
+        'url': url,
+        'qr': qr_base64
+    })
+    link_groups_data[group_id]['link_count'] = len(link_groups_data[group_id]['links'])
+    
+    save_links(links_data)
+    save_link_groups(link_groups_data)
+    
+    return jsonify({'success': True, 'link_id': link_id, 'url': url})
+
+@app.route('/api/validate-url', methods=['POST'])
+@login_required
+def api_validate_url():
+    data = request.get_json()
+    url = data.get('url', '').strip()
+    
+    if not url:
+        return jsonify({'valid': False})
+    
+    is_valid = validate_url(url)
+    return jsonify({'valid': is_valid})
+
+@app.route('/api/qr/<filename>')
+@login_required
+def generate_qr(filename):
+    images_data = load_images()
+    if filename not in images_data:
+        return jsonify({'error': 'Image not found'}), 404
+    
+    url = images_data[filename]['url']
+    qr_base64 = generate_qr_code_base64(url)
+    return jsonify({'qr': qr_base64})
+
+@app.route('/api/qr-group/<group_id>')
+def generate_group_qr(group_id):
+    groups_data = load_groups()
+    if group_id not in groups_data:
+        return jsonify({'error': 'Group not found'}), 404
+    
+    url = groups_data[group_id]['url']
+    qr_base64 = generate_qr_code_base64(url)
+    return jsonify({'qr': qr_base64})
+
+@app.route('/api/qr-link/<link_id>')
+@login_required
+def generate_link_qr(link_id):
+    links_data = load_links()
+    if link_id not in links_data:
+        return jsonify({'error': 'Link not found'}), 404
+    
+    return jsonify({'qr': links_data[link_id]['qr']})
+
+@app.route('/api/qr-link-group/<group_id>')
+def generate_link_group_qr(group_id):
+    link_groups_data = load_link_groups()
+    if group_id not in link_groups_data:
+        return jsonify({'error': 'Link Group not found'}), 404
+    
+    url = link_groups_data[group_id]['url']
+    qr_base64 = generate_qr_code_base64(url)
+    return jsonify({'qr': qr_base64})
+
+@app.route('/api/delete/<filename>', methods=['DELETE'])
+@login_required
+def delete_image(filename):
+    images_data = load_images()
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    
+    if filename in images_data:
+        group_id = images_data[filename].get('group_id')
+        if group_id:
+            groups_data = load_groups()
+            if group_id in groups_data:
+                groups_data[group_id]['images'] = [img for img in groups_data[group_id]['images'] if img['filename'] != filename]
+                groups_data[group_id]['image_count'] = len(groups_data[group_id]['images'])
+                save_groups(groups_data)
+        del images_data[filename]
+        save_images(images_data)
+    
     if os.path.exists(file_path):
         os.remove(file_path)
-        return jsonify({'success': True, 'message': 'File deleted successfully'})
+        return jsonify({'success': True, 'message': 'Image deleted successfully'})
+    
     return jsonify({'success': False, 'message': 'File not found'}), 404
 
-# View all uploaded images
-@app.route('/gallery')
-def gallery():
-    """Display all uploaded images in a gallery"""
-    images = []
-    for filename in os.listdir(UPLOAD_FOLDER):
-        if any(filename.lower().endswith(ext) for ext in ALLOWED_EXTENSIONS):
-            file_path = os.path.join(UPLOAD_FOLDER, filename)
-            file_size = get_file_size(file_path)
-            images.append({
-                'filename': filename,
-                'url': request.host_url + 'image/' + filename,
-                'size': file_size,
-                'upload_date': datetime.fromtimestamp(os.path.getctime(file_path)).strftime('%Y-%m-%d %H:%M:%S')
-            })
-    return render_template_string(GALLERY_TEMPLATE, images=images)
+@app.route('/api/delete-link/<link_id>', methods=['DELETE'])
+@login_required
+def delete_link(link_id):
+    links_data = load_links()
+    link_groups_data = load_link_groups()
+    
+    if link_id in links_data:
+        group_id = links_data[link_id].get('group_id')
+        if group_id and group_id in link_groups_data:
+            link_groups_data[group_id]['links'] = [l for l in link_groups_data[group_id]['links'] if l['link_id'] != link_id]
+            link_groups_data[group_id]['link_count'] = len(link_groups_data[group_id]['links'])
+            save_link_groups(link_groups_data)
+        del links_data[link_id]
+        save_links(links_data)
+        return jsonify({'success': True, 'message': 'Link deleted successfully'})
+    
+    return jsonify({'success': False, 'message': 'Link not found'}), 404
 
-# Clean up old uploads (optional - run manually)
-@app.route('/cleanup', methods=['POST'])
-def cleanup():
-    """Delete files older than 7 days"""
-    import time
-    deleted = 0
-    current_time = time.time()
-    for filename in os.listdir(UPLOAD_FOLDER):
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
-        if os.path.isfile(file_path):
-            # Delete files older than 7 days (604800 seconds)
-            if current_time - os.path.getctime(file_path) > 604800:
+@app.route('/api/delete-group/<group_id>', methods=['DELETE'])
+@login_required
+def delete_group(group_id):
+    groups_data = load_groups()
+    images_data = load_images()
+    
+    if group_id not in groups_data:
+        return jsonify({'success': False, 'message': 'Group not found'}), 404
+    
+    group = groups_data[group_id]
+    for img in group.get('images', []):
+        filename = img.get('filename')
+        if filename:
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            if os.path.exists(file_path):
                 os.remove(file_path)
-                deleted += 1
-    return jsonify({'success': True, 'deleted': deleted})
+            if filename in images_data:
+                del images_data[filename]
+    
+    del groups_data[group_id]
+    save_images(images_data)
+    save_groups(groups_data)
+    
+    return jsonify({'success': True, 'message': 'Group deleted successfully'})
 
-# Vercel-এর জন্য WSGI handler (গুরুত্বপূর্ণ)
+@app.route('/api/delete-link-group/<group_id>', methods=['DELETE'])
+@login_required
+def delete_link_group(group_id):
+    link_groups_data = load_link_groups()
+    links_data = load_links()
+    
+    if group_id not in link_groups_data:
+        return jsonify({'success': False, 'message': 'Link Group not found'}), 404
+    
+    for link_id, data in list(links_data.items()):
+        if data.get('group_id') == group_id:
+            del links_data[link_id]
+    
+    del link_groups_data[group_id]
+    save_links(links_data)
+    save_link_groups(link_groups_data)
+    
+    return jsonify({'success': True, 'message': 'Link Group deleted successfully'})
+
+@app.route('/image/<filename>')
+def serve_image(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+# ============ MAIN ============
+
 app = app
 
 if __name__ == '__main__':
-    print("\n" + "="*50)
-    print("🚀 Photo to URL Generator Started!")
-    print("="*50)
+    print("\n" + "="*60)
+    print("🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v4.0")
+    print("="*60)
     print(f"📁 Upload folder: {os.path.abspath(UPLOAD_FOLDER)}")
-    print(f"🌐 Server running at: http://127.0.0.1:5000")
-    print(f"📸 Gallery available at: http://127.0.0.1:5000/gallery")
-    print("="*50)
-    print("Press CTRL+C to stop the server\n")
-    app.run(debug=True, host='0.0.0.0', port=5002)
+    print(f"📁 Data folder: {os.path.abspath(DATA_FOLDER)}")
+    print(f"🌐 Server: http://127.0.0.1:5000")
+    print(f"🔑 Login: {ADMIN_USERNAME} / {ADMIN_PASSWORD}")
+    print("="*60)
+    print("📌 Features:")
+    print("  📸 Single Image → URL + QR")
+    print("  📸📸 Multiple Images → Group + URL + QR")
+    print("  🔗 Single Link → QR")
+    print("  🔗🔗 Multiple Links → Link Group + QR")
+    print("  📁 Unlimited Groups")
+    print("  ➕ Add More to Existing Groups")
+    print("  🆔 All URLs have 'torikul' in ID")
+    print("="*60)
+    print("Press CTRL+C to stop\n")
+    app.run(debug=True, host='0.0.0.0', port=5000)
