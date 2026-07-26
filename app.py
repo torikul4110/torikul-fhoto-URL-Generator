@@ -11,74 +11,41 @@ import qrcode
 from io import BytesIO
 import base64
 import re
+import cloudinary
+import cloudinary.uploader
+from supabase import create_client, Client
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
-# File storage paths
-UPLOAD_FOLDER = os.path.join(tempfile.gettempdir(), 'uploads')
-DATA_FOLDER = os.path.join(tempfile.gettempdir(), 'data')
+# ============ SUPABASE SETUP ============
+SUPABASE_URL = os.environ.get('SUPABASE_URL', 'https://your-project.supabase.co')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY', 'your-supabase-anon-key')
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ============ CLOUDINARY SETUP ============
+cloudinary.config(
+    cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME', 'your-cloud-name'),
+    api_key=os.environ.get('CLOUDINARY_API_KEY', 'your-api-key'),
+    api_secret=os.environ.get('CLOUDINARY_API_SECRET', 'your-api-secret')
+)
+
+# ============ FILE STORAGE (For local development) ============
+BASE_DIR = tempfile.gettempdir() if not os.environ.get('VERCEL') else '/tmp'
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(DATA_FOLDER, exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['DATA_FOLDER'] = DATA_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB
 
-# Login credentials
-ADMIN_USERNAME = "Torikul"
-ADMIN_PASSWORD = "@torikul_1999"
+# ============ LOGIN CREDENTIALS ============
+ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'Torikul')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '@torikul_1999')
 
-# Allowed image extensions
+# ============ ALLOWED EXTENSIONS ============
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'}
 
-# Data files
-IMAGES_FILE = os.path.join(DATA_FOLDER, 'images.json')
-GROUPS_FILE = os.path.join(DATA_FOLDER, 'groups.json')
-LINKS_FILE = os.path.join(DATA_FOLDER, 'links.json')
-LINK_GROUPS_FILE = os.path.join(DATA_FOLDER, 'link_groups.json')
-
-# ============ DATA MANAGEMENT ============
-
-def init_data_files():
-    for file_path in [IMAGES_FILE, GROUPS_FILE, LINKS_FILE, LINK_GROUPS_FILE]:
-        if not os.path.exists(file_path):
-            with open(file_path, 'w') as f:
-                json.dump({}, f)
-
-init_data_files()
-
-def load_images():
-    with open(IMAGES_FILE, 'r') as f:
-        return json.load(f)
-
-def save_images(images):
-    with open(IMAGES_FILE, 'w') as f:
-        json.dump(images, f, indent=2)
-
-def load_groups():
-    with open(GROUPS_FILE, 'r') as f:
-        return json.load(f)
-
-def save_groups(groups):
-    with open(GROUPS_FILE, 'w') as f:
-        json.dump(groups, f, indent=2)
-
-def load_links():
-    with open(LINKS_FILE, 'r') as f:
-        return json.load(f)
-
-def save_links(links):
-    with open(LINKS_FILE, 'w') as f:
-        json.dump(links, f, indent=2)
-
-def load_link_groups():
-    with open(LINK_GROUPS_FILE, 'r') as f:
-        return json.load(f)
-
-def save_link_groups(link_groups):
-    with open(LINK_GROUPS_FILE, 'w') as f:
-        json.dump(link_groups, f, indent=2)
+# ============ DATABASE FUNCTIONS ============
 
 def generate_unique_id():
     """Generate unique ID with 'torikul' suffix"""
@@ -109,11 +76,11 @@ def generate_qr_code_base64(url):
 def validate_url(url):
     """Validate if the URL is valid"""
     url_pattern = re.compile(
-        r'^https?://'  # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
-        r'localhost|'  # localhost...
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
-        r'(?::\d+)?'  # optional port
+        r'^https?://'
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'
+        r'localhost|'
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+        r'(?::\d+)?'
         r'(?:/?|[/?]\S+)$', re.IGNORECASE)
     return re.match(url_pattern, url) is not None
 
@@ -124,6 +91,271 @@ def login_required(f):
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated_function
+
+# ============ DATABASE OPERATIONS ============
+
+def upload_to_cloudinary(file_path, filename):
+    """Upload image to Cloudinary and return URL"""
+    try:
+        result = cloudinary.uploader.upload(file_path, 
+            public_id=filename.replace('.', '_'),
+            folder='torikul_images'
+        )
+        return result['secure_url']
+    except Exception as e:
+        print(f"Cloudinary upload error: {e}")
+        return None
+
+def save_image_to_db(filename, original_name, url, size, file_type, group_id=None):
+    """Save image data to Supabase"""
+    try:
+        data = {
+            'filename': filename,
+            'original_name': original_name,
+            'url': url,
+            'size': size,
+            'type': file_type,
+            'upload_date': datetime.now().isoformat(),
+            'group_id': group_id,
+            'views': 0
+        }
+        result = supabase.table('images').insert(data).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        print(f"Database save error: {e}")
+        return None
+
+def save_group_to_db(group_id, name, url, image_count, images):
+    """Save group data to Supabase"""
+    try:
+        data = {
+            'id': group_id,
+            'name': name,
+            'url': url,
+            'image_count': image_count,
+            'images': json.dumps(images),
+            'created_at': datetime.now().isoformat(),
+            'views': 0
+        }
+        result = supabase.table('groups').insert(data).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        print(f"Database save error: {e}")
+        return None
+
+def save_link_to_db(link_id, url, qr, group_id=None):
+    """Save link data to Supabase"""
+    try:
+        data = {
+            'link_id': link_id,
+            'url': url,
+            'qr': qr,
+            'group_id': group_id,
+            'created_at': datetime.now().isoformat()
+        }
+        result = supabase.table('links').insert(data).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        print(f"Database save error: {e}")
+        return None
+
+def save_link_group_to_db(group_id, name, url, link_count, links):
+    """Save link group data to Supabase"""
+    try:
+        data = {
+            'id': group_id,
+            'name': name,
+            'url': url,
+            'link_count': link_count,
+            'links': json.dumps(links),
+            'created_at': datetime.now().isoformat(),
+            'views': 0
+        }
+        result = supabase.table('link_groups').insert(data).execute()
+        return result.data[0] if result.data else None
+    except Exception as e:
+        print(f"Database save error: {e}")
+        return None
+
+def get_images_from_db():
+    """Get all images from Supabase"""
+    try:
+        result = supabase.table('images').select('*').execute()
+        images = {}
+        for item in result.data:
+            images[item['filename']] = {
+                'filename': item['original_name'],
+                'url': item['url'],
+                'size': item['size'],
+                'type': item['type'],
+                'upload_date': item['upload_date'],
+                'group_id': item.get('group_id'),
+                'views': item.get('views', 0)
+            }
+        return images
+    except Exception as e:
+        print(f"Database fetch error: {e}")
+        return {}
+
+def get_groups_from_db():
+    """Get all groups from Supabase"""
+    try:
+        result = supabase.table('groups').select('*').execute()
+        groups = {}
+        for item in result.data:
+            groups[item['id']] = {
+                'id': item['id'],
+                'name': item['name'],
+                'url': item['url'],
+                'image_count': item['image_count'],
+                'images': json.loads(item['images']) if item['images'] else [],
+                'created_at': item['created_at'],
+                'views': item.get('views', 0)
+            }
+        return groups
+    except Exception as e:
+        print(f"Database fetch error: {e}")
+        return {}
+
+def get_links_from_db():
+    """Get all links from Supabase"""
+    try:
+        result = supabase.table('links').select('*').execute()
+        links = {}
+        for item in result.data:
+            links[item['link_id']] = {
+                'link_id': item['link_id'],
+                'url': item['url'],
+                'qr': item['qr'],
+                'group_id': item.get('group_id'),
+                'created_at': item['created_at']
+            }
+        return links
+    except Exception as e:
+        print(f"Database fetch error: {e}")
+        return {}
+
+def get_link_groups_from_db():
+    """Get all link groups from Supabase"""
+    try:
+        result = supabase.table('link_groups').select('*').execute()
+        link_groups = {}
+        for item in result.data:
+            link_groups[item['id']] = {
+                'id': item['id'],
+                'name': item['name'],
+                'url': item['url'],
+                'link_count': item['link_count'],
+                'links': json.loads(item['links']) if item['links'] else [],
+                'created_at': item['created_at'],
+                'views': item.get('views', 0)
+            }
+        return link_groups
+    except Exception as e:
+        print(f"Database fetch error: {e}")
+        return {}
+
+def delete_image_from_db(filename):
+    """Delete image from Supabase"""
+    try:
+        supabase.table('images').delete().eq('filename', filename).execute()
+        return True
+    except Exception as e:
+        print(f"Database delete error: {e}")
+        return False
+
+def delete_group_from_db(group_id):
+    """Delete group from Supabase"""
+    try:
+        # Delete all images in the group first
+        supabase.table('images').delete().eq('group_id', group_id).execute()
+        # Delete the group
+        supabase.table('groups').delete().eq('id', group_id).execute()
+        return True
+    except Exception as e:
+        print(f"Database delete error: {e}")
+        return False
+
+def delete_link_from_db(link_id):
+    """Delete link from Supabase"""
+    try:
+        supabase.table('links').delete().eq('link_id', link_id).execute()
+        return True
+    except Exception as e:
+        print(f"Database delete error: {e}")
+        return False
+
+def delete_link_group_from_db(group_id):
+    """Delete link group from Supabase"""
+    try:
+        # Delete all links in the group first
+        supabase.table('links').delete().eq('group_id', group_id).execute()
+        # Delete the link group
+        supabase.table('link_groups').delete().eq('id', group_id).execute()
+        return True
+    except Exception as e:
+        print(f"Database delete error: {e}")
+        return False
+
+def increment_group_views(group_id):
+    """Increment group view count"""
+    try:
+        group = supabase.table('groups').select('views').eq('id', group_id).execute()
+        if group.data:
+            current_views = group.data[0].get('views', 0) + 1
+            supabase.table('groups').update({'views': current_views}).eq('id', group_id).execute()
+    except Exception as e:
+        print(f"View increment error: {e}")
+
+def increment_link_group_views(group_id):
+    """Increment link group view count"""
+    try:
+        group = supabase.table('link_groups').select('views').eq('id', group_id).execute()
+        if group.data:
+            current_views = group.data[0].get('views', 0) + 1
+            supabase.table('link_groups').update({'views': current_views}).eq('id', group_id).execute()
+    except Exception as e:
+        print(f"View increment error: {e}")
+
+def add_image_to_group_db(group_id, image_data):
+    """Add image to existing group in Supabase"""
+    try:
+        # Get current group data
+        group = supabase.table('groups').select('images, image_count').eq('id', group_id).execute()
+        if group.data:
+            images = json.loads(group.data[0]['images']) if group.data[0]['images'] else []
+            images.append(image_data)
+            image_count = group.data[0]['image_count'] + 1
+            
+            supabase.table('groups').update({
+                'images': json.dumps(images),
+                'image_count': image_count
+            }).eq('id', group_id).execute()
+            return True
+        return False
+    except Exception as e:
+        print(f"Add to group error: {e}")
+        return False
+
+def add_link_to_group_db(group_id, link_data):
+    """Add link to existing link group in Supabase"""
+    try:
+        # Get current link group data
+        group = supabase.table('link_groups').select('links, link_count').eq('id', group_id).execute()
+        if group.data:
+            links = json.loads(group.data[0]['links']) if group.data[0]['links'] else []
+            links.append(link_data)
+            link_count = group.data[0]['link_count'] + 1
+            
+            supabase.table('link_groups').update({
+                'links': json.dumps(links),
+                'link_count': link_count
+            }).eq('id', group_id).execute()
+            return True
+        return False
+    except Exception as e:
+        print(f"Add to link group error: {e}")
+        return False
 
 # ============ LOGIN TEMPLATE ============
 
@@ -593,7 +825,7 @@ DASHBOARD_TEMPLATE = '''
                 </a>
             </div>
             <div style="margin-top:40px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;padding:20px;">
-                🔨 Created by TORIKUL | 🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v4.0
+                🔨 Created by TORIKUL | 🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v5.0 (Database Powered)
             </div>
         </div>
     </div>
@@ -794,7 +1026,7 @@ UPLOAD_TEMPLATE = '''
         <div class="upload-area" onclick="document.getElementById('fileInput').click()">
             <div class="icon">📷</div>
             <div class="text">Click to select an image</div>
-            <div class="sub">or drag & drop here</div>
+            <div class="sub">or drag & drop here (Stored in Cloudinary)</div>
             <input type="file" id="fileInput" accept="image/*" onchange="handleFile(this.files[0])">
         </div>
         
@@ -833,7 +1065,7 @@ UPLOAD_TEMPLATE = '''
         </div>
         
         <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
-            🔨 Created by TORIKUL
+            🔨 Created by TORIKUL | ✅ Data stored in Supabase + Cloudinary
         </div>
     </div>
     
@@ -885,7 +1117,7 @@ UPLOAD_TEMPLATE = '''
                             document.getElementById('qrImg').src = 'data:image/png;base64,' + qrData.qr;
                             document.getElementById('resultBox').style.display = 'block';
                             document.getElementById('loading').style.display = 'none';
-                            showToast('✅ Image uploaded & QR generated!', 'success');
+                            showToast('✅ Image uploaded & stored in Cloudinary!', 'success');
                         });
                 }
             })
@@ -922,7 +1154,7 @@ UPLOAD_TEMPLATE = '''
                     .then(res => res.json())
                     .then(data => {
                         if (data.success) {
-                            showToast('✅ Image deleted!', 'success');
+                            showToast('✅ Image deleted from Cloudinary!', 'success');
                             document.getElementById('resultBox').style.display = 'none';
                             document.getElementById('fileInput').value = '';
                         } else {
@@ -1152,7 +1384,7 @@ MULTIPLE_UPLOAD_TEMPLATE = '''
         <div class="upload-area" onclick="document.getElementById('fileInput').click()">
             <div class="icon">📸</div>
             <div class="text">Click to select multiple images</div>
-            <div class="sub">or drag & drop here</div>
+            <div class="sub">or drag & drop here (Stored in Cloudinary)</div>
             <input type="file" id="fileInput" accept="image/*" multiple onchange="handleFiles(this.files)">
         </div>
         
@@ -1190,7 +1422,7 @@ MULTIPLE_UPLOAD_TEMPLATE = '''
         </div>
         
         <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
-            🔨 Created by TORIKUL
+            🔨 Created by TORIKUL | ✅ Data stored in Supabase + Cloudinary
         </div>
     </div>
     
@@ -1199,7 +1431,7 @@ MULTIPLE_UPLOAD_TEMPLATE = '''
     <div class="modal" id="confirmModal">
         <div class="modal-content">
             <h3>⚠️ Delete Entire Group?</h3>
-            <p>This will delete all images inside this group.</p>
+            <p>This will delete all images inside this group from Cloudinary.</p>
             <div class="btn-group">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                 <button class="btn btn-danger" id="confirmDelete">Delete Group</button>
@@ -1337,7 +1569,7 @@ MULTIPLE_UPLOAD_TEMPLATE = '''
                     .then(res => res.json())
                     .then(data => {
                         if (data.success) {
-                            showToast('✅ Group deleted!', 'success');
+                            showToast('✅ Group deleted from Cloudinary!', 'success');
                             document.getElementById('resultBox').style.display = 'none';
                         } else {
                             showToast('❌ Delete failed!', 'error');
@@ -1544,7 +1776,7 @@ LINK_QR_TEMPLATE = '''
         </div>
         
         <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
-            🔨 Created by TORIKUL
+            🔨 Created by TORIKUL | ✅ Data stored in Supabase
         </div>
     </div>
     
@@ -1617,7 +1849,7 @@ LINK_QR_TEMPLATE = '''
                     document.getElementById('resultUrl').textContent = data.url;
                     document.getElementById('resultQrImg').src = 'data:image/png;base64,' + data.qr;
                     document.getElementById('resultBox').style.display = 'block';
-                    showToast('✅ QR Code generated!', 'success');
+                    showToast('✅ QR Code generated & stored in Supabase!', 'success');
                 } else {
                     showToast('❌ ' + data.error, 'error');
                 }
@@ -1654,7 +1886,7 @@ LINK_QR_TEMPLATE = '''
                     .then(res => res.json())
                     .then(data => {
                         if (data.success) {
-                            showToast('✅ Link deleted!', 'success');
+                            showToast('✅ Link deleted from Supabase!', 'success');
                             document.getElementById('resultBox').style.display = 'none';
                             document.getElementById('linkInput').value = '';
                             document.getElementById('statusMsg').className = 'status-msg';
@@ -1895,7 +2127,7 @@ MULTIPLE_LINK_QR_TEMPLATE = '''
         </div>
         
         <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
-            🔨 Created by TORIKUL
+            🔨 Created by TORIKUL | ✅ Data stored in Supabase
         </div>
     </div>
     
@@ -1904,7 +2136,7 @@ MULTIPLE_LINK_QR_TEMPLATE = '''
     <div class="modal" id="confirmModal">
         <div class="modal-content">
             <h3>⚠️ Delete Entire Group?</h3>
-            <p>This will delete all links inside this group.</p>
+            <p>This will delete all links inside this group from Supabase.</p>
             <div class="btn-group">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                 <button class="btn btn-danger" id="confirmDelete">Delete Group</button>
@@ -2003,7 +2235,7 @@ MULTIPLE_LINK_QR_TEMPLATE = '''
                 .then(res => res.json())
                 .then(data => {
                     if (data.success) {
-                        showToast('✅ Link deleted!', 'success');
+                        showToast('✅ Link deleted from Supabase!', 'success');
                         location.reload();
                     } else {
                         showToast('❌ Delete failed!', 'error');
@@ -2038,7 +2270,7 @@ MULTIPLE_LINK_QR_TEMPLATE = '''
                     .then(res => res.json())
                     .then(data => {
                         if (data.success) {
-                            showToast('✅ Group deleted!', 'success');
+                            showToast('✅ Group deleted from Supabase!', 'success');
                             document.getElementById('resultBox').style.display = 'none';
                         } else {
                             showToast('❌ Delete failed!', 'error');
@@ -2110,6 +2342,7 @@ GALLERY_TEMPLATE = '''
             border-radius: 16px;
             overflow: hidden;
             transition: all 0.3s;
+            cursor: pointer;
         }
         .image-card:hover { transform: translateY(-5px); background: rgba(255, 255, 255, 0.06); }
         .image-card .img-wrap { height: 220px; overflow: hidden; }
@@ -2212,18 +2445,18 @@ GALLERY_TEMPLATE = '''
         {% if images %}
         <div class="gallery-grid">
             {% for img in images %}
-            <div class="image-card" data-filename="{{ img.filename }}">
+            <div class="image-card" onclick="location.href='{{ url_for('single_image', filename=img.filename) }}'">
                 <div class="img-wrap">
-                    <img src="{{ img.url }}" alt="{{ img.filename }}">
+                    <img src="{{ img.url }}" alt="{{ img.filename }}" loading="lazy">
                 </div>
                 <div class="info">
                     <div class="name">{{ img.original_name[:35] }}{% if img.original_name|length > 35 %}...{% endif %}</div>
                     <div class="meta">📦 {{ img.size }} | 🕒 {{ img.upload_date }}</div>
-                    <div class="url" onclick="copyToClipboard('{{ img.url }}')">🔗 {{ img.url[:50] }}...</div>
+                    <div class="url" onclick="event.stopPropagation();copyToClipboard('{{ img.url }}')">🔗 {{ img.url[:50] }}...</div>
                     <div class="btn-group">
-                        <button class="btn btn-primary" onclick="copyToClipboard('{{ img.url }}')">📋 Copy</button>
-                        <button class="btn btn-success" onclick="downloadQR('{{ img.filename }}')">🧾 QR</button>
-                        <button class="btn btn-danger" onclick="deleteImage('{{ img.filename }}')">🗑️ Delete</button>
+                        <button class="btn btn-primary" onclick="event.stopPropagation();copyToClipboard('{{ img.url }}')">📋 Copy</button>
+                        <button class="btn btn-success" onclick="event.stopPropagation();downloadQR('{{ img.filename }}')">🧾 QR</button>
+                        <button class="btn btn-danger" onclick="event.stopPropagation();deleteImage('{{ img.filename }}')">🗑️ Delete</button>
                     </div>
                 </div>
             </div>
@@ -2239,7 +2472,7 @@ GALLERY_TEMPLATE = '''
         {% endif %}
         
         <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
-            🔨 Created by TORIKUL | Total: {{ images|length }} images
+            🔨 Created by TORIKUL | Total: {{ images|length }} images | ✅ Stored in Cloudinary
         </div>
     </div>
     
@@ -2289,9 +2522,10 @@ GALLERY_TEMPLATE = '''
                     .then(res => res.json())
                     .then(data => {
                         if (data.success) {
-                            showToast('✅ Image deleted!', 'success');
+                            showToast('✅ Image deleted from Cloudinary!', 'success');
                             const card = document.querySelector(`.image-card[data-filename="${deleteTarget}"]`);
                             if (card) card.remove();
+                            location.reload();
                         } else {
                             showToast('❌ Delete failed!', 'error');
                         }
@@ -2365,6 +2599,7 @@ GROUPS_TEMPLATE = '''
             grid-template-columns: repeat(3, 1fr);
             gap: 2px;
             height: 150px;
+            cursor: pointer;
         }
         .group-card .thumb-grid img { width: 100%; height: 100%; object-fit: cover; }
         .group-card .thumb-grid .more { display: flex; justify-content: center; align-items: center; background: rgba(102, 126, 234, 0.2); font-size: 1.2em; }
@@ -2372,6 +2607,7 @@ GROUPS_TEMPLATE = '''
         .group-card .info .name { font-weight: 600; font-size: 1.1em; }
         .group-card .info .meta { color: rgba(255,255,255,0.4); font-size: 0.85em; margin: 5px 0; }
         .group-card .info .url { color: #667eea; font-size: 0.75em; word-break: break-all; cursor: pointer; }
+        .group-card .info .views { color: rgba(255,255,255,0.3); font-size: 0.7em; margin-top: 5px; }
         .group-card .btn-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
         .btn {
             padding: 6px 14px;
@@ -2465,9 +2701,9 @@ GROUPS_TEMPLATE = '''
         <div class="groups-grid">
             {% for gid, group in groups.items() %}
             <div class="group-card" data-groupid="{{ gid }}">
-                <div class="thumb-grid">
+                <div class="thumb-grid" onclick="window.open('{{ group.url }}', '_blank')">
                     {% for img in group.images[:3] %}
-                    <img src="{{ img.url }}" alt="{{ img.original_name }}">
+                    <img src="{{ img.url }}" alt="{{ img.original_name }}" loading="lazy">
                     {% endfor %}
                     {% if group.images|length > 3 %}
                     <div class="more">+{{ group.images|length - 3 }}</div>
@@ -2476,6 +2712,7 @@ GROUPS_TEMPLATE = '''
                 <div class="info">
                     <div class="name">📁 {{ group.name }}</div>
                     <div class="meta">📸 {{ group.image_count }} images | 🕒 {{ group.created_at }}</div>
+                    <div class="views">👁️ {{ group.views }} views</div>
                     <div class="url" onclick="copyToClipboard('{{ group.url }}')">🔗 {{ group.url }}</div>
                     <div class="btn-group">
                         <button class="btn btn-primary" onclick="copyToClipboard('{{ group.url }}')">📋 Copy Link</button>
@@ -2497,7 +2734,7 @@ GROUPS_TEMPLATE = '''
         {% endif %}
         
         <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
-            🔨 Created by TORIKUL | Total: {{ groups|length }} groups
+            🔨 Created by TORIKUL | Total: {{ groups|length }} groups | ✅ Stored in Supabase + Cloudinary
         </div>
     </div>
     
@@ -2506,7 +2743,7 @@ GROUPS_TEMPLATE = '''
     <div class="modal" id="confirmModal">
         <div class="modal-content">
             <h3>⚠️ Delete Entire Group?</h3>
-            <p>This will delete all images inside this group.</p>
+            <p>This will delete all images inside this group from Cloudinary.</p>
             <div class="btn-group">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                 <button class="btn btn-danger" id="confirmDelete">Delete Group</button>
@@ -2547,7 +2784,7 @@ GROUPS_TEMPLATE = '''
                     .then(res => res.json())
                     .then(data => {
                         if (data.success) {
-                            showToast('✅ Group deleted!', 'success');
+                            showToast('✅ Group deleted from Cloudinary!', 'success');
                             const card = document.querySelector(`.group-card[data-groupid="${deleteTarget}"]`);
                             if (card) card.remove();
                         } else {
@@ -2619,9 +2856,10 @@ LINK_GROUPS_TEMPLATE = '''
             padding: 20px;
         }
         .group-card:hover { transform: translateY(-5px); background: rgba(255, 255, 255, 0.06); }
-        .group-card .name { font-weight: 600; font-size: 1.1em; }
+        .group-card .name { font-weight: 600; font-size: 1.1em; cursor: pointer; }
         .group-card .meta { color: rgba(255,255,255,0.4); font-size: 0.85em; margin: 5px 0; }
         .group-card .url { color: #667eea; font-size: 0.75em; word-break: break-all; cursor: pointer; }
+        .group-card .views { color: rgba(255,255,255,0.3); font-size: 0.7em; margin-top: 5px; }
         .group-card .links-preview {
             margin: 10px 0;
             padding: 10px;
@@ -2729,10 +2967,11 @@ LINK_GROUPS_TEMPLATE = '''
         {% if groups %}
         <div class="groups-grid">
             {% for gid, group in groups.items() %}
-            <div class="group-card" data-groupid="{{ gid }}">
+            <div class="group-card" data-groupid="{{ gid }}" onclick="window.open('{{ group.url }}', '_blank')">
                 <div class="name">📁🔗 {{ group.name }}</div>
                 <div class="meta">🔗 {{ group.link_count }} links | 🕒 {{ group.created_at }}</div>
-                <div class="url" onclick="copyToClipboard('{{ group.url }}')">🔗 {{ group.url }}</div>
+                <div class="views">👁️ {{ group.views }} views</div>
+                <div class="url" onclick="event.stopPropagation();copyToClipboard('{{ group.url }}')">🔗 {{ group.url }}</div>
                 <div class="links-preview">
                     {% for link in group.links[:5] %}
                     <div class="link-item">🔗 {{ link.url }}</div>
@@ -2742,10 +2981,10 @@ LINK_GROUPS_TEMPLATE = '''
                     {% endif %}
                 </div>
                 <div class="btn-group">
-                    <button class="btn btn-primary" onclick="copyToClipboard('{{ group.url }}')">📋 Copy Link</button>
-                    <button class="btn btn-success" onclick="downloadGroupQR('{{ gid }}')">🧾 QR</button>
-                    <button class="btn btn-secondary" onclick="window.open('{{ group.url }}', '_blank')">👁️ View</button>
-                    <button class="btn btn-danger" onclick="deleteGroup('{{ gid }}')">🗑️ Delete</button>
+                    <button class="btn btn-primary" onclick="event.stopPropagation();copyToClipboard('{{ group.url }}')">📋 Copy Link</button>
+                    <button class="btn btn-success" onclick="event.stopPropagation();downloadGroupQR('{{ gid }}')">🧾 QR</button>
+                    <button class="btn btn-secondary" onclick="event.stopPropagation();window.open('{{ group.url }}', '_blank')">👁️ View</button>
+                    <button class="btn btn-danger" onclick="event.stopPropagation();deleteGroup('{{ gid }}')">🗑️ Delete</button>
                 </div>
             </div>
             {% endfor %}
@@ -2760,7 +2999,7 @@ LINK_GROUPS_TEMPLATE = '''
         {% endif %}
         
         <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
-            🔨 Created by TORIKUL | Total: {{ groups|length }} groups
+            🔨 Created by TORIKUL | Total: {{ groups|length }} groups | ✅ Stored in Supabase
         </div>
     </div>
     
@@ -2769,7 +3008,7 @@ LINK_GROUPS_TEMPLATE = '''
     <div class="modal" id="confirmModal">
         <div class="modal-content">
             <h3>⚠️ Delete Entire Group?</h3>
-            <p>This will delete all links inside this group.</p>
+            <p>This will delete all links inside this group from Supabase.</p>
             <div class="btn-group">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
                 <button class="btn btn-danger" id="confirmDelete">Delete Group</button>
@@ -2810,7 +3049,7 @@ LINK_GROUPS_TEMPLATE = '''
                     .then(res => res.json())
                     .then(data => {
                         if (data.success) {
-                            showToast('✅ Group deleted!', 'success');
+                            showToast('✅ Group deleted from Supabase!', 'success');
                             const card = document.querySelector(`.group-card[data-groupid="${deleteTarget}"]`);
                             if (card) card.remove();
                         } else {
@@ -2837,7 +3076,7 @@ LINK_GROUPS_TEMPLATE = '''
 </html>
 '''
 
-# ============ GROUP VIEW TEMPLATE ============
+# ============ GROUP VIEW TEMPLATE (GALLERY VIEW) ============
 
 GROUP_VIEW_TEMPLATE = '''
 <!DOCTYPE html>
@@ -2896,10 +3135,38 @@ GROUP_VIEW_TEMPLATE = '''
             border-radius: 12px;
             overflow: hidden;
             transition: all 0.3s;
+            cursor: pointer;
+            position: relative;
         }
-        .gallery-item:hover { transform: translateY(-5px); background: rgba(255, 255, 255, 0.06); }
-        .gallery-item img { width: 100%; height: 200px; object-fit: cover; }
-        .gallery-item .name { padding: 10px; font-size: 0.85em; color: rgba(255,255,255,0.6); text-align: center; word-break: break-all; }
+        .gallery-item:hover { 
+            transform: translateY(-5px); 
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow: 0 10px 40px rgba(102, 126, 234, 0.2);
+        }
+        .gallery-item img { 
+            width: 100%; 
+            height: 200px; 
+            object-fit: cover; 
+            transition: transform 0.3s;
+        }
+        .gallery-item:hover img { transform: scale(1.05); }
+        .gallery-item .name { 
+            padding: 12px; 
+            font-size: 0.85em; 
+            color: rgba(255,255,255,0.7); 
+            text-align: center; 
+            word-break: break-all;
+        }
+        .gallery-item .overlay {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.6);
+            padding: 5px 10px;
+            border-radius: 8px;
+            font-size: 0.7em;
+            color: rgba(255,255,255,0.6);
+        }
         .btn {
             padding: 8px 18px;
             border: none;
@@ -2920,24 +3187,6 @@ GROUP_VIEW_TEMPLATE = '''
         .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
         .qr-container { text-align: center; padding: 15px; background: #fff; border-radius: 12px; display: inline-block; }
         .qr-container img { max-width: 180px; }
-        .add-area {
-            margin-top: 20px;
-            padding: 20px;
-            background: rgba(255,255,255,0.03);
-            border-radius: 12px;
-            border: 1px dashed rgba(102, 126, 234, 0.3);
-        }
-        .add-area input[type="file"] { display: none; }
-        .add-area .upload-btn {
-            padding: 10px 25px;
-            background: rgba(102, 126, 234, 0.2);
-            border: 1px solid rgba(102, 126, 234, 0.3);
-            border-radius: 10px;
-            color: #fff;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        .add-area .upload-btn:hover { background: rgba(102, 126, 234, 0.3); }
         .toast-container {
             position: fixed;
             bottom: 30px;
@@ -2963,10 +3212,16 @@ GROUP_VIEW_TEMPLATE = '''
             from { transform: translateX(100px); opacity: 0; }
             to { transform: translateX(0); opacity: 1; }
         }
+        .view-counter {
+            color: rgba(255,255,255,0.3);
+            font-size: 0.8em;
+            margin-top: 10px;
+        }
         @media (max-width: 600px) {
             .container { padding: 15px; }
             .header h1 { font-size: 1.3em; }
             .gallery-grid { grid-template-columns: 1fr; }
+            .gallery-item img { height: 250px; }
             .group-meta .info { flex-direction: column; gap: 10px; }
         }
     </style>
@@ -2983,10 +3238,11 @@ GROUP_VIEW_TEMPLATE = '''
                 <div>📸 <strong>{{ group.image_count }}</strong> images</div>
                 <div>🕒 <strong>{{ group.created_at }}</strong></div>
                 <div>🆔 <strong>{{ group.id }}</strong></div>
+                <div>👁️ <strong>{{ group.views }}</strong> views</div>
             </div>
             <div class="url">🔗 {{ group.url }}</div>
             <div class="btn-group">
-                <button class="btn btn-primary" onclick="copyToClipboard('{{ group.url }}')">📋 Copy Link</button>
+                <button class="btn btn-primary" onclick="copyToClipboard('{{ group.url }}')">📋 Copy Group Link</button>
                 <button class="btn btn-success" onclick="downloadGroupQR()">⬇️ Download QR</button>
             </div>
             <div style="margin-top:15px;">
@@ -2997,37 +3253,24 @@ GROUP_VIEW_TEMPLATE = '''
             </div>
         </div>
         
-        <div class="add-area">
-            <p style="margin-bottom:10px;color:rgba(255,255,255,0.6);">➕ Add More Images to this Group</p>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-                <button class="upload-btn" onclick="document.getElementById('addFileInput').click()">📸 Select Images</button>
-                <span id="addFileCount" style="color:rgba(255,255,255,0.4);font-size:0.9em;">No images selected</span>
-                <button class="btn btn-primary" onclick="addImagesToGroup()">📤 Upload to Group</button>
-            </div>
-            <input type="file" id="addFileInput" accept="image/*" multiple onchange="updateAddFiles(this.files)">
-            <div id="addFileList" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:5px;"></div>
-        </div>
-        
         <div class="gallery-grid">
             {% for img in group.images %}
-            <div class="gallery-item" data-filename="{{ img.filename }}">
-                <img src="{{ img.url }}" alt="{{ img.original_name }}">
-                <div class="name">{{ img.original_name }}</div>
+            <div class="gallery-item" onclick="location.href='{{ url_for('single_image', filename=img.filename) }}?group={{ group.id }}'">
+                <img src="{{ img.url }}" alt="{{ img.original_name }}" loading="lazy">
+                <div class="name">📸 {{ img.original_name }}</div>
+                <div class="overlay">🔗 View</div>
             </div>
             {% endfor %}
         </div>
         
         <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
-            🔨 Created by TORIKUL
+            🔨 Created by TORIKUL | 🖼️ Click any image to view in full | ✅ Stored in Cloudinary
         </div>
     </div>
     
     <div class="toast-container" id="toastContainer"></div>
     
     <script>
-        let addFiles = [];
-        let groupId = '{{ group.id }}';
-        
         function copyToClipboard(text) {
             navigator.clipboard.writeText(text).then(() => {
                 showToast('✅ Link copied!', 'success');
@@ -3047,57 +3290,6 @@ GROUP_VIEW_TEMPLATE = '''
             }
         }
         
-        function updateAddFiles(files) {
-            addFiles = [];
-            for (let f of files) {
-                if (f.type.startsWith('image/')) {
-                    addFiles.push(f);
-                }
-            }
-            document.getElementById('addFileCount').textContent = addFiles.length + ' images selected';
-            
-            const list = document.getElementById('addFileList');
-            list.innerHTML = '';
-            addFiles.forEach((file, i) => {
-                const tag = document.createElement('span');
-                tag.style.cssText = 'background:rgba(102,126,234,0.2);padding:3px 12px;border-radius:15px;font-size:0.8em;';
-                tag.textContent = '📸 ' + file.name.substring(0, 20);
-                list.appendChild(tag);
-            });
-        }
-        
-        function addImagesToGroup() {
-            if (addFiles.length === 0) {
-                showToast('❌ Please select images!', 'error');
-                return;
-            }
-            
-            const formData = new FormData();
-            formData.append('group_id', groupId);
-            for (let file of addFiles) {
-                formData.append('photos', file);
-            }
-            
-            showToast('⏳ Uploading images...', 'success');
-            
-            fetch('/api/add-to-image-group', {
-                method: 'POST',
-                body: formData
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    showToast('✅ ' + data.count + ' images added to group!', 'success');
-                    setTimeout(() => location.reload(), 1500);
-                } else {
-                    showToast('❌ ' + data.error, 'error');
-                }
-            })
-            .catch(err => {
-                showToast('❌ Upload failed!', 'error');
-            });
-        }
-        
         function showToast(message, type = 'success') {
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
@@ -3113,6 +3305,393 @@ GROUP_VIEW_TEMPLATE = '''
             .then(data => {
                 document.getElementById('groupQrImg').src = 'data:image/png;base64,' + data.qr;
             });
+    </script>
+</body>
+</html>
+'''
+
+# ============ SINGLE IMAGE VIEW TEMPLATE ============
+
+SINGLE_IMAGE_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ image.original_name }} - TORIKUL IMAGE • LINK • QR SYSTEM</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a1a;
+            min-height: 100vh;
+            color: #fff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container { 
+            max-width: 1100px; 
+            width: 100%;
+            margin: 0 auto; 
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .header h1 { 
+            font-size: 1.5em; 
+            word-break: break-all;
+        }
+        .header h1 span { 
+            background: linear-gradient(135deg, #667eea, #764ba2); 
+            -webkit-background-clip: text; 
+            -webkit-text-fill-color: transparent; 
+        }
+        .btn-back {
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.06);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            color: #fff;
+            text-decoration: none;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn-back:hover { background: rgba(255,255,255,0.12); }
+        
+        .image-container {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 20px;
+            overflow: hidden;
+            padding: 20px;
+        }
+        .image-wrapper {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 400px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        .image-wrapper img {
+            max-width: 100%;
+            max-height: 70vh;
+            object-fit: contain;
+            border-radius: 8px;
+        }
+        
+        .image-info {
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .image-info .info-item {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .image-info .info-item .label {
+            color: rgba(255,255,255,0.4);
+            font-size: 0.8em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .image-info .info-item .value {
+            color: #fff;
+            word-break: break-all;
+            font-size: 0.95em;
+        }
+        .image-info .info-item .value.url {
+            color: #667eea;
+            cursor: pointer;
+        }
+        .image-info .info-item .value.url:hover {
+            text-decoration: underline;
+        }
+        
+        .btn-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 20px;
+            justify-content: center;
+        }
+        .btn {
+            padding: 12px 25px;
+            border: none;
+            border-radius: 10px;
+            font-size: 0.95em;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #fff;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+        }
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-primary:hover { transform: scale(1.05); box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3); }
+        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-success:hover { transform: scale(1.05); }
+        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-danger:hover { transform: scale(1.05); }
+        .btn-secondary { background: rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .btn-warning { background: linear-gradient(135deg, #f093fb, #f5576c); }
+        .btn-warning:hover { transform: scale(1.05); }
+        
+        .qr-section {
+            margin-top: 25px;
+            text-align: center;
+            padding: 20px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .qr-section .qr-container {
+            display: inline-block;
+            padding: 15px;
+            background: #fff;
+            border-radius: 12px;
+        }
+        .qr-section .qr-container img {
+            max-width: 200px;
+        }
+        .qr-section .qr-label {
+            color: rgba(255,255,255,0.4);
+            font-size: 0.85em;
+            margin-bottom: 10px;
+        }
+        
+        .toast-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            padding: 14px 24px;
+            border-radius: 12px;
+            background: rgba(20, 20, 40, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #fff;
+            font-size: 0.95em;
+            animation: slideIn 0.3s ease-out;
+        }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes slideIn {
+            from { transform: translateX(100px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        @media (max-width: 768px) {
+            .container { padding: 0; }
+            .header h1 { font-size: 1.2em; }
+            .image-info { grid-template-columns: 1fr; }
+            .image-wrapper { min-height: 250px; }
+            .image-wrapper img { max-height: 50vh; }
+            .btn-group .btn { padding: 10px 16px; font-size: 0.85em; }
+            .btn-back { padding: 8px 14px; font-size: 0.85em; }
+        }
+        @media (max-width: 480px) {
+            .image-wrapper { min-height: 200px; }
+            .image-wrapper img { max-height: 40vh; }
+            .btn-group { flex-direction: column; align-items: stretch; }
+            .btn-group .btn { justify-content: center; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🖼️ <span>{{ image.original_name }}</span></h1>
+            <a href="{{ back_url }}" class="btn-back">⬅️ Back to Gallery</a>
+        </div>
+        
+        <div class="image-container">
+            <div class="image-wrapper">
+                <img src="{{ image.url }}" alt="{{ image.original_name }}" id="mainImage">
+            </div>
+            
+            <div class="image-info">
+                <div class="info-item">
+                    <span class="label">📄 Filename</span>
+                    <span class="value">{{ image.original_name }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="label">📦 Size</span>
+                    <span class="value">{{ image.size }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="label">🕒 Uploaded</span>
+                    <span class="value">{{ image.upload_date }}</span>
+                </div>
+                <div class="info-item">
+                    <span class="label">🆔 Image ID</span>
+                    <span class="value" style="font-size:0.85em;color:rgba(255,255,255,0.5);">{{ image.filename }}</span>
+                </div>
+                <div class="info-item" style="grid-column: 1 / -1;">
+                    <span class="label">🔗 Image URL</span>
+                    <span class="value url" onclick="copyToClipboard('{{ image.url }}')">{{ image.url }}</span>
+                </div>
+            </div>
+            
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="copyToClipboard('{{ image.url }}')">📋 Copy Link</button>
+                <button class="btn btn-success" onclick="downloadImage()">⬇️ Download Image</button>
+                <button class="btn btn-warning" onclick="toggleQR()">🧾 View QR</button>
+                <a href="{{ back_url }}" class="btn btn-secondary">⬅️ Back to Gallery</a>
+                {% if session.get('logged_in') %}
+                <button class="btn btn-danger" onclick="deleteImage()">🗑️ Delete Image</button>
+                {% endif %}
+            </div>
+            
+            <div class="qr-section" id="qrSection" style="display: none;">
+                <div class="qr-label">🧾 QR Code for this Image</div>
+                <div class="qr-container">
+                    <img id="qrImg" alt="QR Code">
+                </div>
+                <div style="margin-top:10px;">
+                    <button class="btn btn-success" onclick="downloadQR()" style="padding:8px 20px;font-size:0.85em;">⬇️ Download QR</button>
+                </div>
+            </div>
+        </div>
+        
+        <div style="margin-top:25px;text-align:center;color:rgba(255,255,255,0.15);font-size:0.75em;">
+            🔨 Created by TORIKUL | 🖼️ TORIKUL IMAGE • LINK • QR SYSTEM | ✅ Stored in Cloudinary
+        </div>
+    </div>
+    
+    <div class="toast-container" id="toastContainer"></div>
+    
+    <!-- Confirmation Modal for Delete -->
+    <div class="modal" id="confirmModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);backdrop-filter:blur(5px);z-index:1000;justify-content:center;align-items:center;">
+        <div class="modal-content" style="background:#1a1a2e;padding:30px;border-radius:20px;max-width:400px;width:90%;text-align:center;">
+            <h3 style="margin-bottom:15px;">⚠️ Are You Sure?</h3>
+            <p style="color:rgba(255,255,255,0.7);margin-bottom:20px;">Do you really want to delete this image from Cloudinary?</p>
+            <div style="display:flex;gap:10px;justify-content:center;">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let qrLoaded = false;
+        let imageFilename = '{{ image.filename }}';
+        let groupId = '{{ group_id }}';
+        
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showToast('✅ Link copied!', 'success');
+            }).catch(() => {
+                prompt('Copy this link:', text);
+            });
+        }
+        
+        function downloadImage() {
+            const img = document.getElementById('mainImage');
+            const link = document.createElement('a');
+            link.download = '{{ image.original_name }}';
+            link.href = img.src;
+            link.click();
+            showToast('✅ Image downloaded!', 'success');
+        }
+        
+        function toggleQR() {
+            const section = document.getElementById('qrSection');
+            if (section.style.display === 'none') {
+                section.style.display = 'block';
+                if (!qrLoaded) {
+                    fetch('/api/qr/{{ image.filename }}')
+                        .then(res => res.json())
+                        .then(data => {
+                            document.getElementById('qrImg').src = 'data:image/png;base64,' + data.qr;
+                            qrLoaded = true;
+                        });
+                }
+            } else {
+                section.style.display = 'none';
+            }
+        }
+        
+        function downloadQR() {
+            const img = document.getElementById('qrImg');
+            if (img.src) {
+                const link = document.createElement('a');
+                link.download = 'qr_{{ image.filename }}.png';
+                link.href = img.src;
+                link.click();
+                showToast('✅ QR Code downloaded!', 'success');
+            }
+        }
+        
+        function deleteImage() {
+            document.getElementById('confirmModal').style.display = 'flex';
+            document.getElementById('confirmDeleteBtn').onclick = function() {
+                closeModal();
+                fetch('/api/delete/{{ image.filename }}', { method: 'DELETE' })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast('✅ Image deleted from Cloudinary!', 'success');
+                            setTimeout(() => {
+                                window.location.href = '{{ back_url }}';
+                            }, 1500);
+                        } else {
+                            showToast('❌ Delete failed!', 'error');
+                        }
+                    });
+            };
+        }
+        
+        function closeModal() {
+            document.getElementById('confirmModal').style.display = 'none';
+        }
+        
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 3000);
+        }
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                const modal = document.getElementById('confirmModal');
+                if (modal.style.display === 'flex') {
+                    closeModal();
+                }
+                const qrSection = document.getElementById('qrSection');
+                if (qrSection.style.display === 'block') {
+                    qrSection.style.display = 'none';
+                }
+            }
+        });
     </script>
 </body>
 </html>
@@ -3201,24 +3780,6 @@ LINK_GROUP_VIEW_TEMPLATE = '''
         .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
         .qr-container { text-align: center; padding: 15px; background: #fff; border-radius: 12px; display: inline-block; }
         .qr-container img { max-width: 180px; }
-        .add-area {
-            margin-top: 20px;
-            padding: 20px;
-            background: rgba(255,255,255,0.03);
-            border-radius: 12px;
-            border: 1px dashed rgba(102, 126, 234, 0.3);
-        }
-        .add-area input[type="text"] {
-            flex: 1;
-            padding: 10px 16px;
-            background: rgba(255,255,255,0.06);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 8px;
-            color: #fff;
-            outline: none;
-            min-width: 200px;
-        }
-        .add-area input[type="text"]:focus { border-color: #667eea; }
         .toast-container {
             position: fixed;
             bottom: 30px;
@@ -3249,7 +3810,6 @@ LINK_GROUP_VIEW_TEMPLATE = '''
             .header h1 { font-size: 1.3em; }
             .links-grid { grid-template-columns: 1fr; }
             .group-meta .info { flex-direction: column; gap: 10px; }
-            .add-area .add-row { flex-direction: column; }
         }
     </style>
 </head>
@@ -3265,6 +3825,7 @@ LINK_GROUP_VIEW_TEMPLATE = '''
                 <div>🔗 <strong>{{ group.link_count }}</strong> links</div>
                 <div>🕒 <strong>{{ group.created_at }}</strong></div>
                 <div>🆔 <strong>{{ group.id }}</strong></div>
+                <div>👁️ <strong>{{ group.views }}</strong> views</div>
             </div>
             <div class="url">🔗 {{ group.url }}</div>
             <div class="btn-group">
@@ -3277,15 +3838,6 @@ LINK_GROUP_VIEW_TEMPLATE = '''
                     <img id="groupQrImg" alt="QR Code">
                 </div>
             </div>
-        </div>
-        
-        <div class="add-area">
-            <p style="margin-bottom:10px;color:rgba(255,255,255,0.6);">➕ Add More Links to this Group</p>
-            <div class="add-row" style="display:flex;gap:10px;flex-wrap:wrap;">
-                <input type="text" id="addLinkInput" placeholder="https://example.com">
-                <button class="btn btn-primary" onclick="addLinkToGroup()">➕ Add Link</button>
-            </div>
-            <div id="addLinkStatus" style="margin-top:8px;color:rgba(255,255,255,0.4);font-size:0.85em;"></div>
         </div>
         
         <div class="links-grid">
@@ -3305,7 +3857,7 @@ LINK_GROUP_VIEW_TEMPLATE = '''
         </div>
         
         <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">
-            🔨 Created by TORIKUL
+            🔨 Created by TORIKUL | ✅ Stored in Supabase
         </div>
     </div>
     
@@ -3345,47 +3897,13 @@ LINK_GROUP_VIEW_TEMPLATE = '''
                 });
         }
         
-        function addLinkToGroup() {
-            const input = document.getElementById('addLinkInput');
-            const url = input.value.trim();
-            
-            if (!url) {
-                showToast('❌ Please enter a URL!', 'error');
-                return;
-            }
-            
-            document.getElementById('addLinkStatus').textContent = '⏳ Adding link...';
-            
-            fetch('/api/add-to-link-group', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ group_id: groupId, url: url })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success) {
-                    showToast('✅ Link added to group!', 'success');
-                    document.getElementById('addLinkStatus').textContent = '✅ Link added!';
-                    input.value = '';
-                    setTimeout(() => location.reload(), 1500);
-                } else {
-                    showToast('❌ ' + data.error, 'error');
-                    document.getElementById('addLinkStatus').textContent = '❌ ' + data.error;
-                }
-            })
-            .catch(err => {
-                showToast('❌ Failed to add link!', 'error');
-                document.getElementById('addLinkStatus').textContent = '❌ Failed to add link!';
-            });
-        }
-        
         function deleteLink(linkId) {
             if (!confirm('Are you sure you want to delete this link?')) return;
             fetch('/api/delete-link/' + linkId, { method: 'DELETE' })
                 .then(res => res.json())
                 .then(data => {
                     if (data.success) {
-                        showToast('✅ Link deleted!', 'success');
+                        showToast('✅ Link deleted from Supabase!', 'success');
                         const card = document.querySelector(`.link-card[data-linkid="${linkId}"]`);
                         if (card) card.remove();
                     } else {
@@ -3402,10 +3920,6 @@ LINK_GROUP_VIEW_TEMPLATE = '''
             container.appendChild(toast);
             setTimeout(() => { toast.remove(); }, 3000);
         }
-        
-        document.getElementById('addLinkInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') addLinkToGroup();
-        });
         
         // Load group QR
         fetch('/api/qr-link-group/{{ group.id }}')
@@ -3453,13 +3967,13 @@ def home():
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    images = load_images()
-    groups = load_groups()
-    links = load_links()
-    link_groups = load_link_groups()
+    images = get_images_from_db()
+    groups = get_groups_from_db()
+    links = get_links_from_db()
+    link_groups = get_link_groups_from_db()
     
     # Count only non-group images
-    single_images = {k: v for k, v in images.items() if 'group_id' not in v}
+    single_images = {k: v for k, v in images.items() if 'group_id' not in v or v['group_id'] is None}
     
     return render_template_string(DASHBOARD_TEMPLATE,
         total_images=len(single_images),
@@ -3492,44 +4006,83 @@ def multiple_link_qr():
 @app.route('/gallery')
 @login_required
 def gallery():
-    images_data = load_images()
+    images_data = get_images_from_db()
     images = []
     for filename, data in images_data.items():
-        if 'group_id' not in data:
+        if 'group_id' not in data or data['group_id'] is None:
             images.append({
                 'filename': filename,
                 'url': data['url'],
                 'original_name': data.get('filename', filename),
                 'size': data.get('size', 'Unknown'),
-                'upload_date': data.get('upload_date', 'Unknown')
+                'upload_date': data.get('upload_date', 'Unknown')[:10] if data.get('upload_date') else 'Unknown'
             })
     return render_template_string(GALLERY_TEMPLATE, images=images)
 
 @app.route('/groups')
 @login_required
 def groups():
-    groups_data = load_groups()
+    groups_data = get_groups_from_db()
     return render_template_string(GROUPS_TEMPLATE, groups=groups_data)
 
 @app.route('/link-groups')
 @login_required
 def link_groups():
-    link_groups_data = load_link_groups()
+    link_groups_data = get_link_groups_from_db()
     return render_template_string(LINK_GROUPS_TEMPLATE, groups=link_groups_data)
+
+# ============ GROUP VIEW ROUTE (GALLERY) ============
 
 @app.route('/group/<group_id>')
 def view_group(group_id):
-    groups_data = load_groups()
+    groups_data = get_groups_from_db()
     if group_id not in groups_data:
         return "Group not found", 404
-    return render_template_string(GROUP_VIEW_TEMPLATE, group=groups_data[group_id])
+    
+    # Increment view count
+    increment_group_views(group_id)
+    
+    # Reload group data with updated views
+    groups_data = get_groups_from_db()
+    group = groups_data[group_id]
+    
+    return render_template_string(GROUP_VIEW_TEMPLATE, group=group)
+
+# ============ SINGLE IMAGE VIEW ROUTE ============
+
+@app.route('/image/<filename>')
+def single_image(filename):
+    images_data = get_images_from_db()
+    
+    if filename not in images_data:
+        return "Image not found", 404
+    
+    image_data = images_data[filename]
+    
+    # Get back URL - if coming from group, go back to group
+    group_id = request.args.get('group')
+    back_url = url_for('view_group', group_id=group_id) if group_id and group_id in get_groups_from_db() else url_for('gallery')
+    
+    return render_template_string(SINGLE_IMAGE_TEMPLATE,
+        image=image_data,
+        back_url=back_url,
+        group_id=group_id
+    )
 
 @app.route('/link-group/<group_id>')
 def view_link_group(group_id):
-    link_groups_data = load_link_groups()
+    link_groups_data = get_link_groups_from_db()
     if group_id not in link_groups_data:
         return "Link Group not found", 404
-    return render_template_string(LINK_GROUP_VIEW_TEMPLATE, group=link_groups_data[group_id])
+    
+    # Increment view count
+    increment_link_group_views(group_id)
+    
+    # Reload group data with updated views
+    link_groups_data = get_link_groups_from_db()
+    group = link_groups_data[group_id]
+    
+    return render_template_string(LINK_GROUP_VIEW_TEMPLATE, group=group)
 
 # ============ API ROUTES ============
 
@@ -3541,7 +4094,6 @@ def api_upload():
     
     files = request.files.getlist('photos')
     uploaded_files = []
-    images_data = load_images()
     
     for file in files:
         if file and file.filename != '' and allowed_file(file.filename):
@@ -3551,27 +4103,34 @@ def api_upload():
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
             file.save(file_path)
             
-            file_size = get_file_size(file_path)
-            full_url = request.host_url + 'image/' + unique_name
+            # Upload to Cloudinary
+            cloudinary_url = upload_to_cloudinary(file_path, unique_name)
             
-            images_data[unique_name] = {
-                'filename': file.filename,
-                'url': full_url,
-                'size': file_size,
-                'type': ext.upper(),
-                'upload_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'file_path': file_path
-            }
-            
-            uploaded_files.append({
-                'original_name': file.filename,
-                'url': full_url,
-                'size': file_size,
-                'type': ext.upper(),
-                'filename': unique_name
-            })
+            if cloudinary_url:
+                file_size = get_file_size(file_path)
+                
+                # Save to database
+                save_image_to_db(
+                    filename=unique_name,
+                    original_name=file.filename,
+                    url=cloudinary_url,
+                    size=file_size,
+                    file_type=ext.upper(),
+                    group_id=None
+                )
+                
+                uploaded_files.append({
+                    'original_name': file.filename,
+                    'url': cloudinary_url,
+                    'size': file_size,
+                    'type': ext.upper(),
+                    'filename': unique_name
+                })
+                
+                # Clean up local file
+                if os.path.exists(file_path):
+                    os.remove(file_path)
     
-    save_images(images_data)
     return jsonify({'success': True, 'files': uploaded_files})
 
 @app.route('/api/multiple-upload', methods=['POST'])
@@ -3587,8 +4146,6 @@ def api_multiple_upload():
     group_id = generate_unique_id()
     group_name = f"Image_Group_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     uploaded_files = []
-    images_data = load_images()
-    groups_data = load_groups()
     
     for file in files:
         if file and file.filename != '' and allowed_file(file.filename):
@@ -3598,48 +4155,54 @@ def api_multiple_upload():
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
             file.save(file_path)
             
-            file_size = get_file_size(file_path)
-            full_url = request.host_url + 'image/' + unique_name
+            # Upload to Cloudinary
+            cloudinary_url = upload_to_cloudinary(file_path, unique_name)
             
-            images_data[unique_name] = {
-                'filename': file.filename,
-                'url': full_url,
-                'size': file_size,
-                'type': ext.upper(),
-                'upload_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'file_path': file_path,
-                'group_id': group_id
-            }
-            
-            uploaded_files.append({
-                'original_name': file.filename,
-                'url': full_url,
-                'size': file_size,
-                'type': ext.upper(),
-                'filename': unique_name
-            })
+            if cloudinary_url:
+                file_size = get_file_size(file_path)
+                
+                # Save to database with group_id
+                save_image_to_db(
+                    filename=unique_name,
+                    original_name=file.filename,
+                    url=cloudinary_url,
+                    size=file_size,
+                    file_type=ext.upper(),
+                    group_id=group_id
+                )
+                
+                uploaded_files.append({
+                    'original_name': file.filename,
+                    'url': cloudinary_url,
+                    'size': file_size,
+                    'type': ext.upper(),
+                    'filename': unique_name
+                })
+                
+                # Clean up local file
+                if os.path.exists(file_path):
+                    os.remove(file_path)
     
-    group_url = request.host_url + 'group/' + group_id
-    groups_data[group_id] = {
-        'id': group_id,
-        'name': group_name,
-        'url': group_url,
-        'image_count': len(uploaded_files),
-        'images': uploaded_files,
-        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
+    if uploaded_files:
+        group_url = request.host_url + 'group/' + group_id
+        save_group_to_db(
+            group_id=group_id,
+            name=group_name,
+            url=group_url,
+            image_count=len(uploaded_files),
+            images=uploaded_files
+        )
+        
+        return jsonify({
+            'success': True,
+            'group_id': group_id,
+            'group_url': group_url,
+            'group_name': group_name,
+            'files': uploaded_files,
+            'count': len(uploaded_files)
+        })
     
-    save_images(images_data)
-    save_groups(groups_data)
-    
-    return jsonify({
-        'success': True,
-        'group_id': group_id,
-        'group_url': group_url,
-        'group_name': group_name,
-        'files': uploaded_files,
-        'count': len(uploaded_files)
-    })
+    return jsonify({'success': False, 'error': 'No files uploaded successfully'}), 400
 
 @app.route('/api/add-to-image-group', methods=['POST'])
 @login_required
@@ -3652,13 +4215,8 @@ def api_add_to_image_group():
         return jsonify({'error': 'No files uploaded'}), 400
     
     files = request.files.getlist('photos')
-    groups_data = load_groups()
-    images_data = load_images()
-    
-    if group_id not in groups_data:
-        return jsonify({'error': 'Group not found'}), 404
-    
     added = 0
+    
     for file in files:
         if file and file.filename != '' and allowed_file(file.filename):
             ext = file.filename.rsplit('.', 1)[1].lower()
@@ -3667,31 +4225,37 @@ def api_add_to_image_group():
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
             file.save(file_path)
             
-            file_size = get_file_size(file_path)
-            full_url = request.host_url + 'image/' + unique_name
+            # Upload to Cloudinary
+            cloudinary_url = upload_to_cloudinary(file_path, unique_name)
             
-            images_data[unique_name] = {
-                'filename': file.filename,
-                'url': full_url,
-                'size': file_size,
-                'type': ext.upper(),
-                'upload_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'file_path': file_path,
-                'group_id': group_id
-            }
-            
-            groups_data[group_id]['images'].append({
-                'original_name': file.filename,
-                'url': full_url,
-                'size': file_size,
-                'type': ext.upper(),
-                'filename': unique_name
-            })
-            added += 1
-    
-    groups_data[group_id]['image_count'] = len(groups_data[group_id]['images'])
-    save_images(images_data)
-    save_groups(groups_data)
+            if cloudinary_url:
+                file_size = get_file_size(file_path)
+                
+                # Save to database with group_id
+                save_image_to_db(
+                    filename=unique_name,
+                    original_name=file.filename,
+                    url=cloudinary_url,
+                    size=file_size,
+                    file_type=ext.upper(),
+                    group_id=group_id
+                )
+                
+                image_data = {
+                    'original_name': file.filename,
+                    'url': cloudinary_url,
+                    'size': file_size,
+                    'type': ext.upper(),
+                    'filename': unique_name
+                }
+                
+                # Add to group
+                if add_image_to_group_db(group_id, image_data):
+                    added += 1
+                
+                # Clean up local file
+                if os.path.exists(file_path):
+                    os.remove(file_path)
     
     return jsonify({'success': True, 'count': added})
 
@@ -3708,18 +4272,10 @@ def api_link_to_qr():
         return jsonify({'success': False, 'error': 'Invalid URL format'}), 400
     
     link_id = generate_unique_id()
-    links_data = load_links()
-    
     qr_base64 = generate_qr_code_base64(url)
     
-    links_data[link_id] = {
-        'link_id': link_id,
-        'url': url,
-        'qr': qr_base64,
-        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
-    
-    save_links(links_data)
+    # Save to database
+    save_link_to_db(link_id=link_id, url=url, qr=qr_base64)
     
     return jsonify({
         'success': True,
@@ -3749,21 +4305,18 @@ def api_multiple_links_to_qr():
     group_id = generate_unique_id()
     group_name = f"Link_Group_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
-    link_groups_data = load_link_groups()
-    links_data = load_links()
-    
     processed_links = []
     for url in valid_links:
         link_id = generate_unique_id()
         qr_base64 = generate_qr_code_base64(url)
         
-        links_data[link_id] = {
-            'link_id': link_id,
-            'url': url,
-            'qr': qr_base64,
-            'group_id': group_id,
-            'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
+        # Save to database with group_id
+        save_link_to_db(
+            link_id=link_id,
+            url=url,
+            qr=qr_base64,
+            group_id=group_id
+        )
         
         processed_links.append({
             'link_id': link_id,
@@ -3771,27 +4324,26 @@ def api_multiple_links_to_qr():
             'qr': qr_base64
         })
     
-    group_url = request.host_url + 'link-group/' + group_id
-    link_groups_data[group_id] = {
-        'id': group_id,
-        'name': group_name,
-        'url': group_url,
-        'link_count': len(processed_links),
-        'links': processed_links,
-        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
+    if processed_links:
+        group_url = request.host_url + 'link-group/' + group_id
+        save_link_group_to_db(
+            group_id=group_id,
+            name=group_name,
+            url=group_url,
+            link_count=len(processed_links),
+            links=processed_links
+        )
+        
+        return jsonify({
+            'success': True,
+            'group_id': group_id,
+            'group_url': group_url,
+            'group_name': group_name,
+            'links': processed_links,
+            'count': len(processed_links)
+        })
     
-    save_links(links_data)
-    save_link_groups(link_groups_data)
-    
-    return jsonify({
-        'success': True,
-        'group_id': group_id,
-        'group_url': group_url,
-        'group_name': group_name,
-        'links': processed_links,
-        'count': len(processed_links)
-    })
+    return jsonify({'success': False, 'error': 'No links processed successfully'}), 400
 
 @app.route('/api/add-to-link-group', methods=['POST'])
 @login_required
@@ -3809,34 +4361,28 @@ def api_add_to_link_group():
     if not validate_url(url):
         return jsonify({'error': 'Invalid URL format'}), 400
     
-    link_groups_data = load_link_groups()
-    links_data = load_links()
-    
-    if group_id not in link_groups_data:
-        return jsonify({'error': 'Group not found'}), 404
-    
     link_id = generate_unique_id()
     qr_base64 = generate_qr_code_base64(url)
     
-    links_data[link_id] = {
-        'link_id': link_id,
-        'url': url,
-        'qr': qr_base64,
-        'group_id': group_id,
-        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
+    # Save to database with group_id
+    save_link_to_db(
+        link_id=link_id,
+        url=url,
+        qr=qr_base64,
+        group_id=group_id
+    )
     
-    link_groups_data[group_id]['links'].append({
+    link_data = {
         'link_id': link_id,
         'url': url,
         'qr': qr_base64
-    })
-    link_groups_data[group_id]['link_count'] = len(link_groups_data[group_id]['links'])
+    }
     
-    save_links(links_data)
-    save_link_groups(link_groups_data)
+    # Add to group
+    if add_link_to_group_db(group_id, link_data):
+        return jsonify({'success': True, 'link_id': link_id, 'url': url})
     
-    return jsonify({'success': True, 'link_id': link_id, 'url': url})
+    return jsonify({'success': False, 'error': 'Failed to add link to group'}), 400
 
 @app.route('/api/validate-url', methods=['POST'])
 @login_required
@@ -3851,9 +4397,8 @@ def api_validate_url():
     return jsonify({'valid': is_valid})
 
 @app.route('/api/qr/<filename>')
-@login_required
 def generate_qr(filename):
-    images_data = load_images()
+    images_data = get_images_from_db()
     if filename not in images_data:
         return jsonify({'error': 'Image not found'}), 404
     
@@ -3863,7 +4408,7 @@ def generate_qr(filename):
 
 @app.route('/api/qr-group/<group_id>')
 def generate_group_qr(group_id):
-    groups_data = load_groups()
+    groups_data = get_groups_from_db()
     if group_id not in groups_data:
         return jsonify({'error': 'Group not found'}), 404
     
@@ -3874,7 +4419,7 @@ def generate_group_qr(group_id):
 @app.route('/api/qr-link/<link_id>')
 @login_required
 def generate_link_qr(link_id):
-    links_data = load_links()
+    links_data = get_links_from_db()
     if link_id not in links_data:
         return jsonify({'error': 'Link not found'}), 404
     
@@ -3882,7 +4427,7 @@ def generate_link_qr(link_id):
 
 @app.route('/api/qr-link-group/<group_id>')
 def generate_link_group_qr(group_id):
-    link_groups_data = load_link_groups()
+    link_groups_data = get_link_groups_from_db()
     if group_id not in link_groups_data:
         return jsonify({'error': 'Link Group not found'}), 404
     
@@ -3893,40 +4438,66 @@ def generate_link_group_qr(group_id):
 @app.route('/api/delete/<filename>', methods=['DELETE'])
 @login_required
 def delete_image(filename):
-    images_data = load_images()
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    images_data = get_images_from_db()
     
     if filename in images_data:
         group_id = images_data[filename].get('group_id')
+        
+        # Delete from Cloudinary
+        try:
+            public_id = filename.replace('.', '_')
+            cloudinary.uploader.destroy(f"torikul_images/{public_id}")
+        except Exception as e:
+            print(f"Cloudinary delete error: {e}")
+        
+        # Delete from database
+        delete_image_from_db(filename)
+        
+        # Remove from group if exists
         if group_id:
-            groups_data = load_groups()
+            groups_data = get_groups_from_db()
             if group_id in groups_data:
                 groups_data[group_id]['images'] = [img for img in groups_data[group_id]['images'] if img['filename'] != filename]
                 groups_data[group_id]['image_count'] = len(groups_data[group_id]['images'])
-                save_groups(groups_data)
-        del images_data[filename]
-        save_images(images_data)
+                # Update group in database
+                try:
+                    supabase.table('groups').update({
+                        'images': json.dumps(groups_data[group_id]['images']),
+                        'image_count': groups_data[group_id]['image_count']
+                    }).eq('id', group_id).execute()
+                except Exception as e:
+                    print(f"Group update error: {e}")
+        
+        return jsonify({'success': True, 'message': 'Image deleted successfully from Cloudinary'})
     
-    if os.path.exists(file_path):
-        os.remove(file_path)
-        return jsonify({'success': True, 'message': 'Image deleted successfully'})
-    
-    return jsonify({'success': False, 'message': 'File not found'}), 404
+    return jsonify({'success': False, 'message': 'Image not found'}), 404
 
 @app.route('/api/delete-link/<link_id>', methods=['DELETE'])
 @login_required
 def delete_link(link_id):
-    links_data = load_links()
-    link_groups_data = load_link_groups()
+    links_data = get_links_from_db()
     
     if link_id in links_data:
         group_id = links_data[link_id].get('group_id')
-        if group_id and group_id in link_groups_data:
-            link_groups_data[group_id]['links'] = [l for l in link_groups_data[group_id]['links'] if l['link_id'] != link_id]
-            link_groups_data[group_id]['link_count'] = len(link_groups_data[group_id]['links'])
-            save_link_groups(link_groups_data)
-        del links_data[link_id]
-        save_links(links_data)
+        
+        # Delete from database
+        delete_link_from_db(link_id)
+        
+        # Remove from group if exists
+        if group_id:
+            link_groups_data = get_link_groups_from_db()
+            if group_id in link_groups_data:
+                link_groups_data[group_id]['links'] = [l for l in link_groups_data[group_id]['links'] if l['link_id'] != link_id]
+                link_groups_data[group_id]['link_count'] = len(link_groups_data[group_id]['links'])
+                # Update group in database
+                try:
+                    supabase.table('link_groups').update({
+                        'links': json.dumps(link_groups_data[group_id]['links']),
+                        'link_count': link_groups_data[group_id]['link_count']
+                    }).eq('id', group_id).execute()
+                except Exception as e:
+                    print(f"Link group update error: {e}")
+        
         return jsonify({'success': True, 'message': 'Link deleted successfully'})
     
     return jsonify({'success': False, 'message': 'Link not found'}), 404
@@ -3934,72 +4505,68 @@ def delete_link(link_id):
 @app.route('/api/delete-group/<group_id>', methods=['DELETE'])
 @login_required
 def delete_group(group_id):
-    groups_data = load_groups()
-    images_data = load_images()
+    groups_data = get_groups_from_db()
     
     if group_id not in groups_data:
         return jsonify({'success': False, 'message': 'Group not found'}), 404
     
-    group = groups_data[group_id]
-    for img in group.get('images', []):
+    # Delete all images in the group from Cloudinary
+    for img in groups_data[group_id].get('images', []):
         filename = img.get('filename')
         if filename:
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            if filename in images_data:
-                del images_data[filename]
+            try:
+                public_id = filename.replace('.', '_')
+                cloudinary.uploader.destroy(f"torikul_images/{public_id}")
+            except Exception as e:
+                print(f"Cloudinary delete error: {e}")
     
-    del groups_data[group_id]
-    save_images(images_data)
-    save_groups(groups_data)
+    # Delete group from database (will also delete images)
+    delete_group_from_db(group_id)
     
     return jsonify({'success': True, 'message': 'Group deleted successfully'})
 
 @app.route('/api/delete-link-group/<group_id>', methods=['DELETE'])
 @login_required
 def delete_link_group(group_id):
-    link_groups_data = load_link_groups()
-    links_data = load_links()
+    link_groups_data = get_link_groups_from_db()
     
     if group_id not in link_groups_data:
         return jsonify({'success': False, 'message': 'Link Group not found'}), 404
     
-    for link_id, data in list(links_data.items()):
-        if data.get('group_id') == group_id:
-            del links_data[link_id]
-    
-    del link_groups_data[group_id]
-    save_links(links_data)
-    save_link_groups(link_groups_data)
+    # Delete link group from database (will also delete links)
+    delete_link_group_from_db(group_id)
     
     return jsonify({'success': True, 'message': 'Link Group deleted successfully'})
 
-@app.route('/image/<filename>')
-def serve_image(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
-
 # ============ MAIN ============
 
+# This is what Vercel needs
 app = app
 
 if __name__ == '__main__':
     print("\n" + "="*60)
-    print("🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v4.0")
+    print("🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v5.0 (Database Powered)")
     print("="*60)
     print(f"📁 Upload folder: {os.path.abspath(UPLOAD_FOLDER)}")
-    print(f"📁 Data folder: {os.path.abspath(DATA_FOLDER)}")
     print(f"🌐 Server: http://127.0.0.1:5000")
     print(f"🔑 Login: {ADMIN_USERNAME} / {ADMIN_PASSWORD}")
     print("="*60)
     print("📌 Features:")
-    print("  📸 Single Image → URL + QR")
-    print("  📸📸 Multiple Images → Group + URL + QR")
-    print("  🔗 Single Link → QR")
-    print("  🔗🔗 Multiple Links → Link Group + QR")
+    print("  📸 Single Image → URL + QR (Stored in Cloudinary)")
+    print("  📸📸 Multiple Images → Group + URL + QR (Stored in Cloudinary)")
+    print("  🔗 Single Link → QR (Stored in Supabase)")
+    print("  🔗🔗 Multiple Links → Link Group + QR (Stored in Supabase)")
     print("  📁 Unlimited Groups")
     print("  ➕ Add More to Existing Groups")
     print("  🆔 All URLs have 'torikul' in ID")
+    print("  👁️ Group Gallery View")
+    print("  🖼️ Single Image View with Actions")
+    print("  ✅ Persistent Storage: Supabase + Cloudinary")
+    print("="*60)
+    print("⚠️ IMPORTANT: Set these environment variables:")
+    print("  SUPABASE_URL, SUPABASE_KEY")
+    print("  CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET")
+    print("  ADMIN_USERNAME, ADMIN_PASSWORD, SECRET_KEY")
     print("="*60)
     print("Press CTRL+C to stop\n")
     app.run(debug=True, host='0.0.0.0', port=5000)
