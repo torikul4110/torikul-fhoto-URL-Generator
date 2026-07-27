@@ -1,4 +1,5 @@
 import os
+import sys
 import uuid
 import tempfile
 import json
@@ -15,20 +16,66 @@ import cloudinary
 import cloudinary.uploader
 from supabase import create_client, Client
 
+# ============ PRINT DEBUG INFO ============
+print(f"🐍 Python version: {sys.version}")
+print(f"📂 Current directory: {os.getcwd()}")
+
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
-# ============ SUPABASE SETUP ============
-SUPABASE_URL = os.environ.get('SUPABASE_URL', 'https://your-project.supabase.co')
-SUPABASE_KEY = os.environ.get('SUPABASE_KEY', 'your-supabase-anon-key')
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# ============ CHECK ENVIRONMENT VARIABLES ============
+print("="*60)
+print("🔍 CHECKING ENVIRONMENT VARIABLES")
+print("="*60)
+
+SUPABASE_URL = os.environ.get('SUPABASE_URL')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
+CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME')
+CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY')
+CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
+
+print(f"SUPABASE_URL: {'✅ SET' if SUPABASE_URL else '❌ MISSING - Using default'}")
+print(f"SUPABASE_KEY: {'✅ SET' if SUPABASE_KEY else '❌ MISSING - Using default'}")
+print(f"CLOUDINARY_CLOUD_NAME: {'✅ SET' if CLOUDINARY_CLOUD_NAME else '❌ MISSING - Using default'}")
+print(f"CLOUDINARY_API_KEY: {'✅ SET' if CLOUDINARY_API_KEY else '❌ MISSING - Using default'}")
+print(f"CLOUDINARY_API_SECRET: {'✅ SET' if CLOUDINARY_API_SECRET else '❌ MISSING - Using default'}")
+print("="*60)
+
+# ============ SUPABASE SETUP WITH BETTER ERROR HANDLING ============
+try:
+    SUPABASE_URL = SUPABASE_URL or 'https://your-project.supabase.co'
+    SUPABASE_KEY = SUPABASE_KEY or 'your-supabase-anon-key'
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    
+    try:
+        test_result = supabase.table('images').select('*').limit(1).execute()
+        print("✅ Supabase connected successfully!")
+        print("✅ Table 'images' exists and is accessible")
+    except Exception as table_error:
+        print(f"⚠️ Supabase connected but 'images' table may not exist: {table_error}")
+        print("⚠️ Please create the required tables in Supabase")
+    except Exception as e:
+        print(f"❌ Supabase test failed: {e}")
+        supabase = None
+        
+except Exception as e:
+    print(f"❌ Supabase connection error: {e}")
+    print("⚠️ Please check your SUPABASE_URL and SUPABASE_KEY")
+    print("⚠️ Make sure you have created the tables in Supabase")
+    supabase = None
 
 # ============ CLOUDINARY SETUP ============
-cloudinary.config(
-    cloud_name=os.environ.get('CLOUDINARY_CLOUD_NAME', 'your-cloud-name'),
-    api_key=os.environ.get('CLOUDINARY_API_KEY', 'your-api-key'),
-    api_secret=os.environ.get('CLOUDINARY_API_SECRET', 'your-api-secret')
-)
+try:
+    cloudinary.config(
+        cloud_name=CLOUDINARY_CLOUD_NAME or 'your-cloud-name',
+        api_key=CLOUDINARY_API_KEY or 'your-api-key',
+        api_secret=CLOUDINARY_API_SECRET or 'your-api-secret'
+    )
+    print("✅ Cloudinary configured successfully!")
+except Exception as e:
+    print(f"❌ Cloudinary config error: {e}")
+    print("⚠️ Cloudinary will not work, image uploads will fail")
+    print("⚠️ Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET")
 
 # ============ FILE STORAGE (For local development) ============
 BASE_DIR = tempfile.gettempdir() if not os.environ.get('VERCEL') else '/tmp'
@@ -48,7 +95,6 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'}
 # ============ DATABASE FUNCTIONS ============
 
 def generate_unique_id():
-    """Generate unique ID with 'torikul' suffix"""
     random_part = secrets.token_hex(4)
     return f"{random_part}torikul"
 
@@ -64,7 +110,6 @@ def get_file_size(filepath):
     return f"{size_bytes:.1f} GB"
 
 def generate_qr_code_base64(url):
-    """Generate QR code and return as base64 string"""
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(url)
     qr.make(fit=True)
@@ -74,7 +119,6 @@ def generate_qr_code_base64(url):
     return base64.b64encode(buffered.getvalue()).decode()
 
 def validate_url(url):
-    """Validate if the URL is valid"""
     url_pattern = re.compile(
         r'^https?://'
         r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'
@@ -92,10 +136,9 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# ============ DATABASE OPERATIONS ============
+# ============ DATABASE OPERATIONS WITH ERROR HANDLING ============
 
 def upload_to_cloudinary(file_path, filename):
-    """Upload image to Cloudinary and return URL"""
     try:
         result = cloudinary.uploader.upload(file_path, 
             public_id=filename.replace('.', '_'),
@@ -107,7 +150,9 @@ def upload_to_cloudinary(file_path, filename):
         return None
 
 def save_image_to_db(filename, original_name, url, size, file_type, group_id=None):
-    """Save image data to Supabase"""
+    if not supabase:
+        print("❌ Supabase not initialized - Image not saved to database")
+        return None
     try:
         data = {
             'filename': filename,
@@ -126,7 +171,9 @@ def save_image_to_db(filename, original_name, url, size, file_type, group_id=Non
         return None
 
 def save_group_to_db(group_id, name, url, image_count, images):
-    """Save group data to Supabase"""
+    if not supabase:
+        print("❌ Supabase not initialized - Group not saved to database")
+        return None
     try:
         data = {
             'id': group_id,
@@ -144,7 +191,9 @@ def save_group_to_db(group_id, name, url, image_count, images):
         return None
 
 def save_link_to_db(link_id, url, qr, group_id=None):
-    """Save link data to Supabase"""
+    if not supabase:
+        print("❌ Supabase not initialized - Link not saved to database")
+        return None
     try:
         data = {
             'link_id': link_id,
@@ -160,7 +209,9 @@ def save_link_to_db(link_id, url, qr, group_id=None):
         return None
 
 def save_link_group_to_db(group_id, name, url, link_count, links):
-    """Save link group data to Supabase"""
+    if not supabase:
+        print("❌ Supabase not initialized - Link group not saved to database")
+        return None
     try:
         data = {
             'id': group_id,
@@ -178,7 +229,9 @@ def save_link_group_to_db(group_id, name, url, link_count, links):
         return None
 
 def get_images_from_db():
-    """Get all images from Supabase"""
+    if not supabase:
+        print("⚠️ Supabase not connected, returning empty data")
+        return {}
     try:
         result = supabase.table('images').select('*').execute()
         images = {}
@@ -195,10 +248,13 @@ def get_images_from_db():
         return images
     except Exception as e:
         print(f"Database fetch error: {e}")
+        print("⚠️ Returning empty data")
         return {}
 
 def get_groups_from_db():
-    """Get all groups from Supabase"""
+    if not supabase:
+        print("⚠️ Supabase not connected, returning empty data")
+        return {}
     try:
         result = supabase.table('groups').select('*').execute()
         groups = {}
@@ -215,10 +271,13 @@ def get_groups_from_db():
         return groups
     except Exception as e:
         print(f"Database fetch error: {e}")
+        print("⚠️ Returning empty data")
         return {}
 
 def get_links_from_db():
-    """Get all links from Supabase"""
+    if not supabase:
+        print("⚠️ Supabase not connected, returning empty data")
+        return {}
     try:
         result = supabase.table('links').select('*').execute()
         links = {}
@@ -233,10 +292,13 @@ def get_links_from_db():
         return links
     except Exception as e:
         print(f"Database fetch error: {e}")
+        print("⚠️ Returning empty data")
         return {}
 
 def get_link_groups_from_db():
-    """Get all link groups from Supabase"""
+    if not supabase:
+        print("⚠️ Supabase not connected, returning empty data")
+        return {}
     try:
         result = supabase.table('link_groups').select('*').execute()
         link_groups = {}
@@ -253,10 +315,13 @@ def get_link_groups_from_db():
         return link_groups
     except Exception as e:
         print(f"Database fetch error: {e}")
+        print("⚠️ Returning empty data")
         return {}
 
 def delete_image_from_db(filename):
-    """Delete image from Supabase"""
+    if not supabase:
+        print("⚠️ Supabase not connected")
+        return False
     try:
         supabase.table('images').delete().eq('filename', filename).execute()
         return True
@@ -265,11 +330,11 @@ def delete_image_from_db(filename):
         return False
 
 def delete_group_from_db(group_id):
-    """Delete group from Supabase"""
+    if not supabase:
+        print("⚠️ Supabase not connected")
+        return False
     try:
-        # Delete all images in the group first
         supabase.table('images').delete().eq('group_id', group_id).execute()
-        # Delete the group
         supabase.table('groups').delete().eq('id', group_id).execute()
         return True
     except Exception as e:
@@ -277,7 +342,9 @@ def delete_group_from_db(group_id):
         return False
 
 def delete_link_from_db(link_id):
-    """Delete link from Supabase"""
+    if not supabase:
+        print("⚠️ Supabase not connected")
+        return False
     try:
         supabase.table('links').delete().eq('link_id', link_id).execute()
         return True
@@ -286,11 +353,11 @@ def delete_link_from_db(link_id):
         return False
 
 def delete_link_group_from_db(group_id):
-    """Delete link group from Supabase"""
+    if not supabase:
+        print("⚠️ Supabase not connected")
+        return False
     try:
-        # Delete all links in the group first
         supabase.table('links').delete().eq('group_id', group_id).execute()
-        # Delete the link group
         supabase.table('link_groups').delete().eq('id', group_id).execute()
         return True
     except Exception as e:
@@ -298,7 +365,8 @@ def delete_link_group_from_db(group_id):
         return False
 
 def increment_group_views(group_id):
-    """Increment group view count"""
+    if not supabase:
+        return
     try:
         group = supabase.table('groups').select('views').eq('id', group_id).execute()
         if group.data:
@@ -308,7 +376,8 @@ def increment_group_views(group_id):
         print(f"View increment error: {e}")
 
 def increment_link_group_views(group_id):
-    """Increment link group view count"""
+    if not supabase:
+        return
     try:
         group = supabase.table('link_groups').select('views').eq('id', group_id).execute()
         if group.data:
@@ -318,9 +387,9 @@ def increment_link_group_views(group_id):
         print(f"View increment error: {e}")
 
 def add_image_to_group_db(group_id, image_data):
-    """Add image to existing group in Supabase"""
+    if not supabase:
+        return False
     try:
-        # Get current group data
         group = supabase.table('groups').select('images, image_count').eq('id', group_id).execute()
         if group.data:
             images = json.loads(group.data[0]['images']) if group.data[0]['images'] else []
@@ -338,9 +407,9 @@ def add_image_to_group_db(group_id, image_data):
         return False
 
 def add_link_to_group_db(group_id, link_data):
-    """Add link to existing link group in Supabase"""
+    if not supabase:
+        return False
     try:
-        # Get current link group data
         group = supabase.table('link_groups').select('links, link_count').eq('id', group_id).execute()
         if group.data:
             links = json.loads(group.data[0]['links']) if group.data[0]['links'] else []
@@ -357,7 +426,7 @@ def add_link_to_group_db(group_id, link_data):
         print(f"Add to link group error: {e}")
         return False
 
-# ============ LOGIN TEMPLATE ============
+# ============ TEMPLATES ============
 
 LOGIN_TEMPLATE = '''
 <!DOCTYPE html>
@@ -547,8 +616,6 @@ LOGIN_TEMPLATE = '''
 </body>
 </html>
 '''
-
-# ============ DASHBOARD TEMPLATE ============
 
 DASHBOARD_TEMPLATE = '''
 <!DOCTYPE html>
@@ -856,8 +923,6 @@ DASHBOARD_TEMPLATE = '''
 </html>
 '''
 
-# ============ SINGLE UPLOAD TEMPLATE ============
-
 UPLOAD_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="bn">
@@ -1071,7 +1136,6 @@ UPLOAD_TEMPLATE = '''
     
     <div class="toast-container" id="toastContainer"></div>
     
-    <!-- Confirmation Modal -->
     <div class="modal" id="confirmModal">
         <div class="modal-content">
             <h3>⚠️ Are You Sure?</h3>
@@ -1195,8 +1259,6 @@ UPLOAD_TEMPLATE = '''
 </body>
 </html>
 '''
-
-# ============ MULTIPLE UPLOAD TEMPLATE ============
 
 MULTIPLE_UPLOAD_TEMPLATE = '''
 <!DOCTYPE html>
@@ -1609,8 +1671,6 @@ MULTIPLE_UPLOAD_TEMPLATE = '''
 </html>
 '''
 
-# ============ LINK TO QR TEMPLATE ============
-
 LINK_QR_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="bn">
@@ -1919,8 +1979,6 @@ LINK_QR_TEMPLATE = '''
 </body>
 </html>
 '''
-
-# ============ MULTIPLE LINK QR TEMPLATE ============
 
 MULTIPLE_LINK_QR_TEMPLATE = '''
 <!DOCTYPE html>
@@ -2300,8 +2358,6 @@ MULTIPLE_LINK_QR_TEMPLATE = '''
 </html>
 '''
 
-# ============ GALLERY TEMPLATE ============
-
 GALLERY_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="bn">
@@ -2549,8 +2605,6 @@ GALLERY_TEMPLATE = '''
 </body>
 </html>
 '''
-
-# ============ IMAGE GROUPS TEMPLATE ============
 
 GROUPS_TEMPLATE = '''
 <!DOCTYPE html>
@@ -2810,8 +2864,6 @@ GROUPS_TEMPLATE = '''
 </body>
 </html>
 '''
-
-# ============ LINK GROUPS TEMPLATE ============
 
 LINK_GROUPS_TEMPLATE = '''
 <!DOCTYPE html>
@@ -3076,8 +3128,6 @@ LINK_GROUPS_TEMPLATE = '''
 </html>
 '''
 
-# ============ GROUP VIEW TEMPLATE (GALLERY VIEW) ============
-
 GROUP_VIEW_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="bn">
@@ -3212,11 +3262,6 @@ GROUP_VIEW_TEMPLATE = '''
             from { transform: translateX(100px); opacity: 0; }
             to { transform: translateX(0); opacity: 1; }
         }
-        .view-counter {
-            color: rgba(255,255,255,0.3);
-            font-size: 0.8em;
-            margin-top: 10px;
-        }
         @media (max-width: 600px) {
             .container { padding: 15px; }
             .header h1 { font-size: 1.3em; }
@@ -3299,7 +3344,6 @@ GROUP_VIEW_TEMPLATE = '''
             setTimeout(() => { toast.remove(); }, 3000);
         }
         
-        // Load QR code
         fetch('/api/qr-group/{{ group.id }}')
             .then(res => res.json())
             .then(data => {
@@ -3309,8 +3353,6 @@ GROUP_VIEW_TEMPLATE = '''
 </body>
 </html>
 '''
-
-# ============ SINGLE IMAGE VIEW TEMPLATE ============
 
 SINGLE_IMAGE_TEMPLATE = '''
 <!DOCTYPE html>
@@ -3585,7 +3627,6 @@ SINGLE_IMAGE_TEMPLATE = '''
     
     <div class="toast-container" id="toastContainer"></div>
     
-    <!-- Confirmation Modal for Delete -->
     <div class="modal" id="confirmModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);backdrop-filter:blur(5px);z-index:1000;justify-content:center;align-items:center;">
         <div class="modal-content" style="background:#1a1a2e;padding:30px;border-radius:20px;max-width:400px;width:90%;text-align:center;">
             <h3 style="margin-bottom:15px;">⚠️ Are You Sure?</h3>
@@ -3679,7 +3720,6 @@ SINGLE_IMAGE_TEMPLATE = '''
             setTimeout(() => { toast.remove(); }, 3000);
         }
         
-        // Keyboard shortcuts
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 const modal = document.getElementById('confirmModal');
@@ -3696,8 +3736,6 @@ SINGLE_IMAGE_TEMPLATE = '''
 </body>
 </html>
 '''
-
-# ============ LINK GROUP VIEW TEMPLATE ============
 
 LINK_GROUP_VIEW_TEMPLATE = '''
 <!DOCTYPE html>
@@ -3921,7 +3959,6 @@ LINK_GROUP_VIEW_TEMPLATE = '''
             setTimeout(() => { toast.remove(); }, 3000);
         }
         
-        // Load group QR
         fetch('/api/qr-link-group/{{ group.id }}')
             .then(res => res.json())
             .then(data => {
@@ -3972,7 +4009,6 @@ def dashboard():
     links = get_links_from_db()
     link_groups = get_link_groups_from_db()
     
-    # Count only non-group images
     single_images = {k: v for k, v in images.items() if 'group_id' not in v or v['group_id'] is None}
     
     return render_template_string(DASHBOARD_TEMPLATE,
@@ -4031,24 +4067,17 @@ def link_groups():
     link_groups_data = get_link_groups_from_db()
     return render_template_string(LINK_GROUPS_TEMPLATE, groups=link_groups_data)
 
-# ============ GROUP VIEW ROUTE (GALLERY) ============
-
 @app.route('/group/<group_id>')
 def view_group(group_id):
     groups_data = get_groups_from_db()
     if group_id not in groups_data:
         return "Group not found", 404
     
-    # Increment view count
     increment_group_views(group_id)
-    
-    # Reload group data with updated views
     groups_data = get_groups_from_db()
     group = groups_data[group_id]
     
     return render_template_string(GROUP_VIEW_TEMPLATE, group=group)
-
-# ============ SINGLE IMAGE VIEW ROUTE ============
 
 @app.route('/image/<filename>')
 def single_image(filename):
@@ -4058,8 +4087,6 @@ def single_image(filename):
         return "Image not found", 404
     
     image_data = images_data[filename]
-    
-    # Get back URL - if coming from group, go back to group
     group_id = request.args.get('group')
     back_url = url_for('view_group', group_id=group_id) if group_id and group_id in get_groups_from_db() else url_for('gallery')
     
@@ -4075,10 +4102,7 @@ def view_link_group(group_id):
     if group_id not in link_groups_data:
         return "Link Group not found", 404
     
-    # Increment view count
     increment_link_group_views(group_id)
-    
-    # Reload group data with updated views
     link_groups_data = get_link_groups_from_db()
     group = link_groups_data[group_id]
     
@@ -4103,13 +4127,11 @@ def api_upload():
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
             file.save(file_path)
             
-            # Upload to Cloudinary
             cloudinary_url = upload_to_cloudinary(file_path, unique_name)
             
             if cloudinary_url:
                 file_size = get_file_size(file_path)
                 
-                # Save to database
                 save_image_to_db(
                     filename=unique_name,
                     original_name=file.filename,
@@ -4127,7 +4149,6 @@ def api_upload():
                     'filename': unique_name
                 })
                 
-                # Clean up local file
                 if os.path.exists(file_path):
                     os.remove(file_path)
     
@@ -4155,13 +4176,11 @@ def api_multiple_upload():
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
             file.save(file_path)
             
-            # Upload to Cloudinary
             cloudinary_url = upload_to_cloudinary(file_path, unique_name)
             
             if cloudinary_url:
                 file_size = get_file_size(file_path)
                 
-                # Save to database with group_id
                 save_image_to_db(
                     filename=unique_name,
                     original_name=file.filename,
@@ -4179,7 +4198,6 @@ def api_multiple_upload():
                     'filename': unique_name
                 })
                 
-                # Clean up local file
                 if os.path.exists(file_path):
                     os.remove(file_path)
     
@@ -4225,13 +4243,11 @@ def api_add_to_image_group():
             file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
             file.save(file_path)
             
-            # Upload to Cloudinary
             cloudinary_url = upload_to_cloudinary(file_path, unique_name)
             
             if cloudinary_url:
                 file_size = get_file_size(file_path)
                 
-                # Save to database with group_id
                 save_image_to_db(
                     filename=unique_name,
                     original_name=file.filename,
@@ -4249,11 +4265,9 @@ def api_add_to_image_group():
                     'filename': unique_name
                 }
                 
-                # Add to group
                 if add_image_to_group_db(group_id, image_data):
                     added += 1
                 
-                # Clean up local file
                 if os.path.exists(file_path):
                     os.remove(file_path)
     
@@ -4274,7 +4288,6 @@ def api_link_to_qr():
     link_id = generate_unique_id()
     qr_base64 = generate_qr_code_base64(url)
     
-    # Save to database
     save_link_to_db(link_id=link_id, url=url, qr=qr_base64)
     
     return jsonify({
@@ -4310,7 +4323,6 @@ def api_multiple_links_to_qr():
         link_id = generate_unique_id()
         qr_base64 = generate_qr_code_base64(url)
         
-        # Save to database with group_id
         save_link_to_db(
             link_id=link_id,
             url=url,
@@ -4364,7 +4376,6 @@ def api_add_to_link_group():
     link_id = generate_unique_id()
     qr_base64 = generate_qr_code_base64(url)
     
-    # Save to database with group_id
     save_link_to_db(
         link_id=link_id,
         url=url,
@@ -4378,7 +4389,6 @@ def api_add_to_link_group():
         'qr': qr_base64
     }
     
-    # Add to group
     if add_link_to_group_db(group_id, link_data):
         return jsonify({'success': True, 'link_id': link_id, 'url': url})
     
@@ -4443,23 +4453,19 @@ def delete_image(filename):
     if filename in images_data:
         group_id = images_data[filename].get('group_id')
         
-        # Delete from Cloudinary
         try:
             public_id = filename.replace('.', '_')
             cloudinary.uploader.destroy(f"torikul_images/{public_id}")
         except Exception as e:
             print(f"Cloudinary delete error: {e}")
         
-        # Delete from database
         delete_image_from_db(filename)
         
-        # Remove from group if exists
         if group_id:
             groups_data = get_groups_from_db()
             if group_id in groups_data:
                 groups_data[group_id]['images'] = [img for img in groups_data[group_id]['images'] if img['filename'] != filename]
                 groups_data[group_id]['image_count'] = len(groups_data[group_id]['images'])
-                # Update group in database
                 try:
                     supabase.table('groups').update({
                         'images': json.dumps(groups_data[group_id]['images']),
@@ -4480,16 +4486,13 @@ def delete_link(link_id):
     if link_id in links_data:
         group_id = links_data[link_id].get('group_id')
         
-        # Delete from database
         delete_link_from_db(link_id)
         
-        # Remove from group if exists
         if group_id:
             link_groups_data = get_link_groups_from_db()
             if group_id in link_groups_data:
                 link_groups_data[group_id]['links'] = [l for l in link_groups_data[group_id]['links'] if l['link_id'] != link_id]
                 link_groups_data[group_id]['link_count'] = len(link_groups_data[group_id]['links'])
-                # Update group in database
                 try:
                     supabase.table('link_groups').update({
                         'links': json.dumps(link_groups_data[group_id]['links']),
@@ -4510,7 +4513,6 @@ def delete_group(group_id):
     if group_id not in groups_data:
         return jsonify({'success': False, 'message': 'Group not found'}), 404
     
-    # Delete all images in the group from Cloudinary
     for img in groups_data[group_id].get('images', []):
         filename = img.get('filename')
         if filename:
@@ -4520,7 +4522,6 @@ def delete_group(group_id):
             except Exception as e:
                 print(f"Cloudinary delete error: {e}")
     
-    # Delete group from database (will also delete images)
     delete_group_from_db(group_id)
     
     return jsonify({'success': True, 'message': 'Group deleted successfully'})
@@ -4533,14 +4534,25 @@ def delete_link_group(group_id):
     if group_id not in link_groups_data:
         return jsonify({'success': False, 'message': 'Link Group not found'}), 404
     
-    # Delete link group from database (will also delete links)
     delete_link_group_from_db(group_id)
     
     return jsonify({'success': True, 'message': 'Link Group deleted successfully'})
 
+@app.route('/image-file/<filename>')
+def serve_image(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Not found'}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    print(f"500 Error: {error}")
+    return jsonify({'error': 'Internal server error'}), 500
+
 # ============ MAIN ============
 
-# This is what Vercel needs
 app = app
 
 if __name__ == '__main__':
