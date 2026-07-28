@@ -16,78 +16,73 @@ import cloudinary
 import cloudinary.uploader
 from supabase import create_client, Client
 
+# ============ YOUR CREDENTIALS (HARDCODED) ============
+# Cloudinary Credentials
+CLOUDINARY_CLOUD_NAME = "dzn0efzl1"
+CLOUDINARY_API_KEY = "234878757997651"
+CLOUDINARY_API_SECRET = "lnUtuTC0Y8sditFGBubIGpCx37c"
+
+# Supabase Credentials
+SUPABASE_URL = "https://cfvbtuiszdhfcugqnlzt.supabase.co"
+SUPABASE_KEY = "sb_publishable__9p2gniXYBGlgzbPVG2RmA_6hH4GPqe"
+
+# Authentication
+ADMIN_USERNAME = "Torikul"
+ADMIN_PASSWORD = "@torikul_1999"
+SECRET_KEY = "my-secret-key-12345"
+
+# ============ SET ENVIRONMENT VARIABLES ============
+os.environ['SUPABASE_URL'] = SUPABASE_URL
+os.environ['SUPABASE_KEY'] = SUPABASE_KEY
+os.environ['CLOUDINARY_CLOUD_NAME'] = CLOUDINARY_CLOUD_NAME
+os.environ['CLOUDINARY_API_KEY'] = CLOUDINARY_API_KEY
+os.environ['CLOUDINARY_API_SECRET'] = CLOUDINARY_API_SECRET
+os.environ['ADMIN_USERNAME'] = ADMIN_USERNAME
+os.environ['ADMIN_PASSWORD'] = ADMIN_PASSWORD
+os.environ['SECRET_KEY'] = SECRET_KEY
+
 # ============ PRINT DEBUG INFO ============
 print(f"🐍 Python version: {sys.version}")
 print(f"📂 Current directory: {os.getcwd()}")
+print("="*60)
+print("🔍 CREDENTIALS CHECK")
+print("="*60)
+print(f"✅ SUPABASE_URL: {SUPABASE_URL}")
+print(f"✅ CLOUDINARY_CLOUD_NAME: {CLOUDINARY_CLOUD_NAME}")
+print(f"✅ ADMIN_USERNAME: {ADMIN_USERNAME}")
+print("="*60)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+app.secret_key = SECRET_KEY
 
-# ============ CHECK ENVIRONMENT VARIABLES ============
-print("="*60)
-print("🔍 CHECKING ENVIRONMENT VARIABLES")
-print("="*60)
-
-SUPABASE_URL = os.environ.get('SUPABASE_URL')
-SUPABASE_KEY = os.environ.get('SUPABASE_KEY')
-CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME')
-CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY')
-CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET')
-
-print(f"SUPABASE_URL: {'✅ SET' if SUPABASE_URL else '❌ MISSING - Using default'}")
-print(f"SUPABASE_KEY: {'✅ SET' if SUPABASE_KEY else '❌ MISSING - Using default'}")
-print(f"CLOUDINARY_CLOUD_NAME: {'✅ SET' if CLOUDINARY_CLOUD_NAME else '❌ MISSING - Using default'}")
-print(f"CLOUDINARY_API_KEY: {'✅ SET' if CLOUDINARY_API_KEY else '❌ MISSING - Using default'}")
-print(f"CLOUDINARY_API_SECRET: {'✅ SET' if CLOUDINARY_API_SECRET else '❌ MISSING - Using default'}")
-print("="*60)
-
-# ============ SUPABASE SETUP WITH BETTER ERROR HANDLING ============
+# ============ SUPABASE SETUP ============
+print("🔌 Connecting to Supabase...")
 try:
-    SUPABASE_URL = SUPABASE_URL or 'https://your-project.supabase.co'
-    SUPABASE_KEY = SUPABASE_KEY or 'your-supabase-anon-key'
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    
-    try:
-        test_result = supabase.table('images').select('*').limit(1).execute()
-        print("✅ Supabase connected successfully!")
-        print("✅ Table 'images' exists and is accessible")
-    except Exception as table_error:
-        print(f"⚠️ Supabase connected but 'images' table may not exist: {table_error}")
-        print("⚠️ Please create the required tables in Supabase")
-    except Exception as e:
-        print(f"❌ Supabase test failed: {e}")
-        supabase = None
-        
+    print("✅ Supabase client created successfully!")
 except Exception as e:
     print(f"❌ Supabase connection error: {e}")
-    print("⚠️ Please check your SUPABASE_URL and SUPABASE_KEY")
-    print("⚠️ Make sure you have created the tables in Supabase")
     supabase = None
 
 # ============ CLOUDINARY SETUP ============
+print("☁️ Configuring Cloudinary...")
 try:
     cloudinary.config(
-        cloud_name=CLOUDINARY_CLOUD_NAME or 'your-cloud-name',
-        api_key=CLOUDINARY_API_KEY or 'your-api-key',
-        api_secret=CLOUDINARY_API_SECRET or 'your-api-secret'
+        cloud_name=CLOUDINARY_CLOUD_NAME,
+        api_key=CLOUDINARY_API_KEY,
+        api_secret=CLOUDINARY_API_SECRET
     )
     print("✅ Cloudinary configured successfully!")
 except Exception as e:
     print(f"❌ Cloudinary config error: {e}")
-    print("⚠️ Cloudinary will not work, image uploads will fail")
-    print("⚠️ Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET")
 
-# ============ FILE STORAGE (For local development) ============
+# ============ FILE STORAGE ============
 BASE_DIR = tempfile.gettempdir() if not os.environ.get('VERCEL') else '/tmp'
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB
-
-# ============ LOGIN CREDENTIALS ============
-ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'Torikul')
-ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '@torikul_1999')
+app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
 
 # ============ ALLOWED EXTENSIONS ============
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'}
@@ -136,7 +131,7 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# ============ DATABASE OPERATIONS WITH ERROR HANDLING ============
+# ============ DATABASE OPERATIONS ============
 
 def upload_to_cloudinary(file_path, filename):
     try:
@@ -149,7 +144,7 @@ def upload_to_cloudinary(file_path, filename):
         print(f"Cloudinary upload error: {e}")
         return None
 
-def save_image_to_db(filename, original_name, url, size, file_type, group_id=None):
+def save_image_to_db(filename, original_name, url, size, file_type, group_id=None, link_id=None):
     if not supabase:
         print("❌ Supabase not initialized - Image not saved to database")
         return None
@@ -162,7 +157,9 @@ def save_image_to_db(filename, original_name, url, size, file_type, group_id=Non
             'type': file_type,
             'upload_date': datetime.now().isoformat(),
             'group_id': group_id,
-            'views': 0
+            'link_id': link_id or generate_unique_id(),
+            'views': 0,
+            'is_active': True
         }
         result = supabase.table('images').insert(data).execute()
         return result.data[0] if result.data else None
@@ -170,7 +167,7 @@ def save_image_to_db(filename, original_name, url, size, file_type, group_id=Non
         print(f"Database save error: {e}")
         return None
 
-def save_group_to_db(group_id, name, url, image_count, images):
+def save_group_to_db(group_id, name, url, image_count, images, link_id=None):
     if not supabase:
         print("❌ Supabase not initialized - Group not saved to database")
         return None
@@ -182,7 +179,9 @@ def save_group_to_db(group_id, name, url, image_count, images):
             'image_count': image_count,
             'images': json.dumps(images),
             'created_at': datetime.now().isoformat(),
-            'views': 0
+            'views': 0,
+            'link_id': link_id or generate_unique_id(),
+            'is_active': True
         }
         result = supabase.table('groups').insert(data).execute()
         return result.data[0] if result.data else None
@@ -190,7 +189,7 @@ def save_group_to_db(group_id, name, url, image_count, images):
         print(f"Database save error: {e}")
         return None
 
-def save_link_to_db(link_id, url, qr, group_id=None):
+def save_link_to_db(link_id, url, qr, group_id=None, image_id=None, link_type='image'):
     if not supabase:
         print("❌ Supabase not initialized - Link not saved to database")
         return None
@@ -200,7 +199,10 @@ def save_link_to_db(link_id, url, qr, group_id=None):
             'url': url,
             'qr': qr,
             'group_id': group_id,
-            'created_at': datetime.now().isoformat()
+            'image_id': image_id,
+            'link_type': link_type,
+            'created_at': datetime.now().isoformat(),
+            'is_active': True
         }
         result = supabase.table('links').insert(data).execute()
         return result.data[0] if result.data else None
@@ -208,7 +210,7 @@ def save_link_to_db(link_id, url, qr, group_id=None):
         print(f"Database save error: {e}")
         return None
 
-def save_link_group_to_db(group_id, name, url, link_count, links):
+def save_link_group_to_db(group_id, name, url, link_count, links, link_id=None):
     if not supabase:
         print("❌ Supabase not initialized - Link group not saved to database")
         return None
@@ -220,7 +222,9 @@ def save_link_group_to_db(group_id, name, url, link_count, links):
             'link_count': link_count,
             'links': json.dumps(links),
             'created_at': datetime.now().isoformat(),
-            'views': 0
+            'views': 0,
+            'link_id': link_id or generate_unique_id(),
+            'is_active': True
         }
         result = supabase.table('link_groups').insert(data).execute()
         return result.data[0] if result.data else None
@@ -236,15 +240,18 @@ def get_images_from_db():
         result = supabase.table('images').select('*').execute()
         images = {}
         for item in result.data:
-            images[item['filename']] = {
-                'filename': item['original_name'],
-                'url': item['url'],
-                'size': item['size'],
-                'type': item['type'],
-                'upload_date': item['upload_date'],
-                'group_id': item.get('group_id'),
-                'views': item.get('views', 0)
-            }
+            if item.get('is_active', True):
+                images[item['filename']] = {
+                    'filename': item['original_name'],
+                    'url': item['url'],
+                    'size': item['size'],
+                    'type': item['type'],
+                    'upload_date': item['upload_date'],
+                    'group_id': item.get('group_id'),
+                    'link_id': item.get('link_id'),
+                    'views': item.get('views', 0),
+                    'is_active': item.get('is_active', True)
+                }
         return images
     except Exception as e:
         print(f"Database fetch error: {e}")
@@ -259,15 +266,18 @@ def get_groups_from_db():
         result = supabase.table('groups').select('*').execute()
         groups = {}
         for item in result.data:
-            groups[item['id']] = {
-                'id': item['id'],
-                'name': item['name'],
-                'url': item['url'],
-                'image_count': item['image_count'],
-                'images': json.loads(item['images']) if item['images'] else [],
-                'created_at': item['created_at'],
-                'views': item.get('views', 0)
-            }
+            if item.get('is_active', True):
+                groups[item['id']] = {
+                    'id': item['id'],
+                    'name': item['name'],
+                    'url': item['url'],
+                    'image_count': item['image_count'],
+                    'images': json.loads(item['images']) if item['images'] else [],
+                    'created_at': item['created_at'],
+                    'views': item.get('views', 0),
+                    'link_id': item.get('link_id'),
+                    'is_active': item.get('is_active', True)
+                }
         return groups
     except Exception as e:
         print(f"Database fetch error: {e}")
@@ -282,13 +292,17 @@ def get_links_from_db():
         result = supabase.table('links').select('*').execute()
         links = {}
         for item in result.data:
-            links[item['link_id']] = {
-                'link_id': item['link_id'],
-                'url': item['url'],
-                'qr': item['qr'],
-                'group_id': item.get('group_id'),
-                'created_at': item['created_at']
-            }
+            if item.get('is_active', True):
+                links[item['link_id']] = {
+                    'link_id': item['link_id'],
+                    'url': item['url'],
+                    'qr': item['qr'],
+                    'group_id': item.get('group_id'),
+                    'image_id': item.get('image_id'),
+                    'link_type': item.get('link_type', 'image'),
+                    'created_at': item['created_at'],
+                    'is_active': item.get('is_active', True)
+                }
         return links
     except Exception as e:
         print(f"Database fetch error: {e}")
@@ -303,15 +317,18 @@ def get_link_groups_from_db():
         result = supabase.table('link_groups').select('*').execute()
         link_groups = {}
         for item in result.data:
-            link_groups[item['id']] = {
-                'id': item['id'],
-                'name': item['name'],
-                'url': item['url'],
-                'link_count': item['link_count'],
-                'links': json.loads(item['links']) if item['links'] else [],
-                'created_at': item['created_at'],
-                'views': item.get('views', 0)
-            }
+            if item.get('is_active', True):
+                link_groups[item['id']] = {
+                    'id': item['id'],
+                    'name': item['name'],
+                    'url': item['url'],
+                    'link_count': item['link_count'],
+                    'links': json.loads(item['links']) if item['links'] else [],
+                    'created_at': item['created_at'],
+                    'views': item.get('views', 0),
+                    'link_id': item.get('link_id'),
+                    'is_active': item.get('is_active', True)
+                }
         return link_groups
     except Exception as e:
         print(f"Database fetch error: {e}")
@@ -323,7 +340,7 @@ def delete_image_from_db(filename):
         print("⚠️ Supabase not connected")
         return False
     try:
-        supabase.table('images').delete().eq('filename', filename).execute()
+        supabase.table('images').update({'is_active': False}).eq('filename', filename).execute()
         return True
     except Exception as e:
         print(f"Database delete error: {e}")
@@ -334,8 +351,8 @@ def delete_group_from_db(group_id):
         print("⚠️ Supabase not connected")
         return False
     try:
-        supabase.table('images').delete().eq('group_id', group_id).execute()
-        supabase.table('groups').delete().eq('id', group_id).execute()
+        supabase.table('images').update({'is_active': False}).eq('group_id', group_id).execute()
+        supabase.table('groups').update({'is_active': False}).eq('id', group_id).execute()
         return True
     except Exception as e:
         print(f"Database delete error: {e}")
@@ -346,7 +363,7 @@ def delete_link_from_db(link_id):
         print("⚠️ Supabase not connected")
         return False
     try:
-        supabase.table('links').delete().eq('link_id', link_id).execute()
+        supabase.table('links').update({'is_active': False}).eq('link_id', link_id).execute()
         return True
     except Exception as e:
         print(f"Database delete error: {e}")
@@ -357,8 +374,8 @@ def delete_link_group_from_db(group_id):
         print("⚠️ Supabase not connected")
         return False
     try:
-        supabase.table('links').delete().eq('group_id', group_id).execute()
-        supabase.table('link_groups').delete().eq('id', group_id).execute()
+        supabase.table('links').update({'is_active': False}).eq('group_id', group_id).execute()
+        supabase.table('link_groups').update({'is_active': False}).eq('id', group_id).execute()
         return True
     except Exception as e:
         print(f"Database delete error: {e}")
@@ -424,6 +441,71 @@ def add_link_to_group_db(group_id, link_data):
         return False
     except Exception as e:
         print(f"Add to link group error: {e}")
+        return False
+
+def regenerate_link_and_qr(item_type, item_id):
+    try:
+        if item_type == 'image':
+            image = supabase.table('images').select('*').eq('filename', item_id).execute()
+            if not image.data:
+                return None
+            
+            new_link_id = generate_unique_id()
+            new_url = request.url_root + 'image/' + item_id + '?link=' + new_link_id
+            new_qr = generate_qr_code_base64(new_url)
+            
+            old_link_id = image.data[0].get('link_id')
+            if old_link_id:
+                supabase.table('links').update({'is_active': False}).eq('link_id', old_link_id).execute()
+            
+            supabase.table('images').update({'link_id': new_link_id}).eq('filename', item_id).execute()
+            save_link_to_db(new_link_id, new_url, new_qr, image_id=item_id, link_type='image')
+            
+            return {'link_id': new_link_id, 'url': new_url, 'qr': new_qr}
+            
+        elif item_type == 'group':
+            group = supabase.table('groups').select('*').eq('id', item_id).execute()
+            if not group.data:
+                return None
+            
+            new_link_id = generate_unique_id()
+            new_url = request.url_root + 'group/' + item_id + '?link=' + new_link_id
+            new_qr = generate_qr_code_base64(new_url)
+            
+            old_link_id = group.data[0].get('link_id')
+            if old_link_id:
+                supabase.table('links').update({'is_active': False}).eq('link_id', old_link_id).execute()
+            
+            supabase.table('groups').update({'link_id': new_link_id, 'url': new_url}).eq('id', item_id).execute()
+            save_link_to_db(new_link_id, new_url, new_qr, group_id=item_id, link_type='group')
+            
+            return {'link_id': new_link_id, 'url': new_url, 'qr': new_qr}
+            
+        return None
+    except Exception as e:
+        print(f"Regenerate error: {e}")
+        return None
+
+def delete_single_image_from_group(group_id, filename):
+    try:
+        group = supabase.table('groups').select('images, image_count').eq('id', group_id).execute()
+        if not group.data:
+            return False
+        
+        images = json.loads(group.data[0]['images']) if group.data[0]['images'] else []
+        images = [img for img in images if img['filename'] != filename]
+        image_count = len(images)
+        
+        supabase.table('groups').update({
+            'images': json.dumps(images),
+            'image_count': image_count
+        }).eq('id', group_id).execute()
+        
+        delete_image_from_db(filename)
+        
+        return True
+    except Exception as e:
+        print(f"Delete from group error: {e}")
         return False
 
 # ============ TEMPLATES ============
@@ -892,7 +974,7 @@ DASHBOARD_TEMPLATE = '''
                 </a>
             </div>
             <div style="margin-top:40px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;padding:20px;">
-                🔨 Created by TORIKUL | 🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v5.0 (Database Powered)
+                🔨 Created by TORIKUL | 🔄 TORIKUL IMAGE • LINK • QR SYSTEM v6.0 (Advanced)
             </div>
         </div>
     </div>
@@ -923,6 +1005,7 @@ DASHBOARD_TEMPLATE = '''
 </html>
 '''
 
+# ============ UPLOAD TEMPLATE ============
 UPLOAD_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="bn">
@@ -1173,16 +1256,11 @@ UPLOAD_TEMPLATE = '''
                     document.getElementById('previewImg').src = img.url;
                     document.getElementById('fileName').textContent = img.original_name;
                     document.getElementById('fileSize').textContent = img.size;
-                    document.getElementById('imageUrl').textContent = img.url;
-                    
-                    fetch('/api/qr/' + img.filename)
-                        .then(res => res.json())
-                        .then(qrData => {
-                            document.getElementById('qrImg').src = 'data:image/png;base64,' + qrData.qr;
-                            document.getElementById('resultBox').style.display = 'block';
-                            document.getElementById('loading').style.display = 'none';
-                            showToast('✅ Image uploaded & stored in Cloudinary!', 'success');
-                        });
+                    document.getElementById('imageUrl').textContent = img.link_url;
+                    document.getElementById('qrImg').src = 'data:image/png;base64,' + img.qr;
+                    document.getElementById('resultBox').style.display = 'block';
+                    document.getElementById('loading').style.display = 'none';
+                    showToast('✅ Image uploaded & stored in Cloudinary!', 'success');
                 }
             })
             .catch(err => {
@@ -1585,17 +1663,13 @@ MULTIPLE_UPLOAD_TEMPLATE = '''
                         preview.appendChild(div);
                     });
                     
-                    fetch('/api/qr-group/' + data.group_id)
-                        .then(res => res.json())
-                        .then(qrData => {
-                            document.getElementById('groupQrImg').src = 'data:image/png;base64,' + qrData.qr;
-                            document.getElementById('resultBox').style.display = 'block';
-                            document.getElementById('loading').style.display = 'none';
-                            selectedFiles = [];
-                            document.getElementById('selectedFiles').innerHTML = '';
-                            updateUploadBtn();
-                            showToast('✅ Group created with ' + data.count + ' images!', 'success');
-                        });
+                    document.getElementById('groupQrImg').src = 'data:image/png;base64,' + data.group_qr;
+                    document.getElementById('resultBox').style.display = 'block';
+                    document.getElementById('loading').style.display = 'none';
+                    selectedFiles = [];
+                    document.getElementById('selectedFiles').innerHTML = '';
+                    updateUploadBtn();
+                    showToast('✅ Group created with ' + data.count + ' images!', 'success');
                 }
             })
             .catch(err => {
@@ -2251,13 +2325,9 @@ MULTIPLE_LINK_QR_TEMPLATE = '''
                         grid.appendChild(card);
                     });
                     
-                    fetch('/api/qr-link-group/' + data.group_id)
-                        .then(res => res.json())
-                        .then(qrData => {
-                            document.getElementById('groupQrImg').src = 'data:image/png;base64,' + qrData.qr;
-                            document.getElementById('resultBox').style.display = 'block';
-                            showToast('✅ Group created with ' + data.count + ' links!', 'success');
-                        });
+                    document.getElementById('groupQrImg').src = 'data:image/png;base64,' + data.group_qr;
+                    document.getElementById('resultBox').style.display = 'block';
+                    showToast('✅ Group created with ' + data.count + ' links!', 'success');
                 } else {
                     showToast('❌ ' + data.error, 'error');
                 }
@@ -2408,24 +2478,31 @@ GALLERY_TEMPLATE = '''
         .image-card .info .name { font-weight: 500; word-break: break-all; font-size: 0.9em; }
         .image-card .info .meta { color: rgba(255,255,255,0.4); font-size: 0.8em; margin: 5px 0; }
         .image-card .info .url { color: #667eea; font-size: 0.75em; word-break: break-all; cursor: pointer; }
-        .image-card .btn-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .image-card .action-menu {
+            margin-top: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
         .btn {
-            padding: 6px 14px;
+            padding: 4px 10px;
             border: none;
-            border-radius: 8px;
-            font-size: 0.8em;
+            border-radius: 6px;
+            font-size: 0.7em;
             cursor: pointer;
             transition: all 0.3s;
             color: #fff;
         }
-        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
-        .btn-primary:hover { transform: scale(1.05); }
-        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
-        .btn-success:hover { transform: scale(1.05); }
-        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
-        .btn-danger:hover { transform: scale(1.05); }
-        .btn-secondary { background: rgba(255,255,255,0.1); }
-        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .btn-sm-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-sm-primary:hover { transform: scale(1.05); }
+        .btn-sm-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-sm-success:hover { transform: scale(1.05); }
+        .btn-sm-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-sm-danger:hover { transform: scale(1.05); }
+        .btn-sm-warning { background: linear-gradient(135deg, #f093fb, #f5576c); }
+        .btn-sm-warning:hover { transform: scale(1.05); }
+        .btn-sm-secondary { background: rgba(255,255,255,0.1); }
+        .btn-sm-secondary:hover { background: rgba(255,255,255,0.2); }
         .empty-state {
             text-align: center;
             padding: 80px 20px;
@@ -2501,18 +2578,19 @@ GALLERY_TEMPLATE = '''
         {% if images %}
         <div class="gallery-grid">
             {% for img in images %}
-            <div class="image-card" onclick="location.href='{{ url_for('single_image', filename=img.filename) }}'">
-                <div class="img-wrap">
+            <div class="image-card">
+                <div class="img-wrap" onclick="location.href='{{ url_for('single_image', filename=img.filename) }}'">
                     <img src="{{ img.url }}" alt="{{ img.filename }}" loading="lazy">
                 </div>
                 <div class="info">
                     <div class="name">{{ img.original_name[:35] }}{% if img.original_name|length > 35 %}...{% endif %}</div>
                     <div class="meta">📦 {{ img.size }} | 🕒 {{ img.upload_date }}</div>
-                    <div class="url" onclick="event.stopPropagation();copyToClipboard('{{ img.url }}')">🔗 {{ img.url[:50] }}...</div>
-                    <div class="btn-group">
-                        <button class="btn btn-primary" onclick="event.stopPropagation();copyToClipboard('{{ img.url }}')">📋 Copy</button>
-                        <button class="btn btn-success" onclick="event.stopPropagation();downloadQR('{{ img.filename }}')">🧾 QR</button>
-                        <button class="btn btn-danger" onclick="event.stopPropagation();deleteImage('{{ img.filename }}')">🗑️ Delete</button>
+                    <div class="url" onclick="copyToClipboard('{{ img.url }}')">🔗 {{ img.url[:50] }}...</div>
+                    <div class="action-menu">
+                        <button class="btn btn-sm-primary" onclick="copyToClipboard('{{ img.url }}')">📋 Copy</button>
+                        <button class="btn btn-sm-success" onclick="downloadQR('{{ img.filename }}')">🧾 QR</button>
+                        <button class="btn btn-sm-warning" onclick="regenerateLink('image','{{ img.filename }}')">🔄 Regenerate</button>
+                        <button class="btn btn-sm-danger" onclick="deleteImage('{{ img.filename }}')">🗑️ Delete</button>
                     </div>
                 </div>
             </div>
@@ -2537,16 +2615,18 @@ GALLERY_TEMPLATE = '''
     <div class="modal" id="confirmModal">
         <div class="modal-content">
             <h3>⚠️ Are You Sure?</h3>
-            <p>Do you really want to delete this image?</p>
+            <p id="confirmMessage">Do you really want to delete this image?</p>
             <div class="btn-group">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                <button class="btn btn-danger" id="confirmDelete">Delete</button>
+                <button class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
             </div>
         </div>
     </div>
     
     <script>
         let deleteTarget = null;
+        let deleteType = 'image';
+        let deleteGroupId = null;
         
         function copyToClipboard(text) {
             navigator.clipboard.writeText(text).then(() => {
@@ -2568,10 +2648,30 @@ GALLERY_TEMPLATE = '''
                 });
         }
         
+        function regenerateLink(type, id) {
+            if (!confirm('Are you sure you want to regenerate link and QR for this item?')) return;
+            
+            fetch('/api/regenerate-link/' + type + '/' + id, {
+                method: 'POST'
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    showToast('✅ Link and QR regenerated!', 'success');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast('❌ Failed to regenerate!', 'error');
+                }
+            });
+        }
+        
         function deleteImage(filename) {
             deleteTarget = filename;
+            deleteType = 'image';
+            deleteGroupId = null;
+            document.getElementById('confirmMessage').textContent = 'Do you really want to delete this image?';
             document.getElementById('confirmModal').style.display = 'flex';
-            document.getElementById('confirmDelete').onclick = function() {
+            document.getElementById('confirmDeleteBtn').onclick = function() {
                 closeModal();
                 if (!deleteTarget) return;
                 fetch('/api/delete/' + deleteTarget, { method: 'DELETE' })
@@ -2579,8 +2679,6 @@ GALLERY_TEMPLATE = '''
                     .then(data => {
                         if (data.success) {
                             showToast('✅ Image deleted from Cloudinary!', 'success');
-                            const card = document.querySelector(`.image-card[data-filename="${deleteTarget}"]`);
-                            if (card) card.remove();
                             location.reload();
                         } else {
                             showToast('❌ Delete failed!', 'error');
@@ -2662,24 +2760,26 @@ GROUPS_TEMPLATE = '''
         .group-card .info .meta { color: rgba(255,255,255,0.4); font-size: 0.85em; margin: 5px 0; }
         .group-card .info .url { color: #667eea; font-size: 0.75em; word-break: break-all; cursor: pointer; }
         .group-card .info .views { color: rgba(255,255,255,0.3); font-size: 0.7em; margin-top: 5px; }
-        .group-card .btn-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .group-card .action-menu { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
         .btn {
-            padding: 6px 14px;
+            padding: 4px 10px;
             border: none;
-            border-radius: 8px;
-            font-size: 0.8em;
+            border-radius: 6px;
+            font-size: 0.7em;
             cursor: pointer;
             transition: all 0.3s;
             color: #fff;
         }
-        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
-        .btn-primary:hover { transform: scale(1.05); }
-        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
-        .btn-success:hover { transform: scale(1.05); }
-        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
-        .btn-danger:hover { transform: scale(1.05); }
-        .btn-secondary { background: rgba(255,255,255,0.1); }
-        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .btn-sm-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-sm-primary:hover { transform: scale(1.05); }
+        .btn-sm-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-sm-success:hover { transform: scale(1.05); }
+        .btn-sm-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-sm-danger:hover { transform: scale(1.05); }
+        .btn-sm-warning { background: linear-gradient(135deg, #f093fb, #f5576c); }
+        .btn-sm-warning:hover { transform: scale(1.05); }
+        .btn-sm-secondary { background: rgba(255,255,255,0.1); }
+        .btn-sm-secondary:hover { background: rgba(255,255,255,0.2); }
         .empty-state {
             text-align: center;
             padding: 80px 20px;
@@ -2768,11 +2868,12 @@ GROUPS_TEMPLATE = '''
                     <div class="meta">📸 {{ group.image_count }} images | 🕒 {{ group.created_at }}</div>
                     <div class="views">👁️ {{ group.views }} views</div>
                     <div class="url" onclick="copyToClipboard('{{ group.url }}')">🔗 {{ group.url }}</div>
-                    <div class="btn-group">
-                        <button class="btn btn-primary" onclick="copyToClipboard('{{ group.url }}')">📋 Copy Link</button>
-                        <button class="btn btn-success" onclick="downloadGroupQR('{{ gid }}')">🧾 QR</button>
-                        <button class="btn btn-secondary" onclick="window.open('{{ group.url }}', '_blank')">👁️ View</button>
-                        <button class="btn btn-danger" onclick="deleteGroup('{{ gid }}')">🗑️ Delete</button>
+                    <div class="action-menu">
+                        <button class="btn btn-sm-primary" onclick="copyToClipboard('{{ group.url }}')">📋 Copy Link</button>
+                        <button class="btn btn-sm-success" onclick="downloadGroupQR('{{ gid }}')">🧾 QR</button>
+                        <button class="btn btn-sm-warning" onclick="regenerateLink('group','{{ gid }}')">🔄 Regenerate</button>
+                        <button class="btn btn-sm-secondary" onclick="window.open('{{ group.url }}', '_blank')">👁️ View</button>
+                        <button class="btn btn-sm-danger" onclick="deleteGroup('{{ gid }}')">🗑️ Delete</button>
                     </div>
                 </div>
             </div>
@@ -2797,16 +2898,17 @@ GROUPS_TEMPLATE = '''
     <div class="modal" id="confirmModal">
         <div class="modal-content">
             <h3>⚠️ Delete Entire Group?</h3>
-            <p>This will delete all images inside this group from Cloudinary.</p>
+            <p id="confirmMessage">This will delete all images inside this group from Cloudinary.</p>
             <div class="btn-group">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                <button class="btn btn-danger" id="confirmDelete">Delete Group</button>
+                <button class="btn btn-danger" id="confirmDeleteBtn">Delete Group</button>
             </div>
         </div>
     </div>
     
     <script>
         let deleteTarget = null;
+        let deleteType = 'group';
         
         function copyToClipboard(text) {
             navigator.clipboard.writeText(text).then(() => {
@@ -2828,10 +2930,29 @@ GROUPS_TEMPLATE = '''
                 });
         }
         
+        function regenerateLink(type, id) {
+            if (!confirm('Are you sure you want to regenerate link and QR for this group?')) return;
+            
+            fetch('/api/regenerate-link/' + type + '/' + id, {
+                method: 'POST'
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    showToast('✅ Link and QR regenerated!', 'success');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast('❌ Failed to regenerate!', 'error');
+                }
+            });
+        }
+        
         function deleteGroup(groupId) {
             deleteTarget = groupId;
+            deleteType = 'group';
+            document.getElementById('confirmMessage').textContent = 'This will delete all images inside this group from Cloudinary.';
             document.getElementById('confirmModal').style.display = 'flex';
-            document.getElementById('confirmDelete').onclick = function() {
+            document.getElementById('confirmDeleteBtn').onclick = function() {
                 closeModal();
                 if (!deleteTarget) return;
                 fetch('/api/delete-group/' + deleteTarget, { method: 'DELETE' })
@@ -2839,8 +2960,7 @@ GROUPS_TEMPLATE = '''
                     .then(data => {
                         if (data.success) {
                             showToast('✅ Group deleted from Cloudinary!', 'success');
-                            const card = document.querySelector(`.group-card[data-groupid="${deleteTarget}"]`);
-                            if (card) card.remove();
+                            location.reload();
                         } else {
                             showToast('❌ Delete failed!', 'error');
                         }
@@ -2927,24 +3047,24 @@ LINK_GROUPS_TEMPLATE = '''
             border-bottom: 1px solid rgba(255,255,255,0.03);
             word-break: break-all;
         }
-        .group-card .btn-group { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .group-card .action-menu { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
         .btn {
-            padding: 6px 14px;
+            padding: 4px 10px;
             border: none;
-            border-radius: 8px;
-            font-size: 0.8em;
+            border-radius: 6px;
+            font-size: 0.7em;
             cursor: pointer;
             transition: all 0.3s;
             color: #fff;
         }
-        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
-        .btn-primary:hover { transform: scale(1.05); }
-        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
-        .btn-success:hover { transform: scale(1.05); }
-        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
-        .btn-danger:hover { transform: scale(1.05); }
-        .btn-secondary { background: rgba(255,255,255,0.1); }
-        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .btn-sm-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-sm-primary:hover { transform: scale(1.05); }
+        .btn-sm-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-sm-success:hover { transform: scale(1.05); }
+        .btn-sm-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-sm-danger:hover { transform: scale(1.05); }
+        .btn-sm-secondary { background: rgba(255,255,255,0.1); }
+        .btn-sm-secondary:hover { background: rgba(255,255,255,0.2); }
         .empty-state {
             text-align: center;
             padding: 80px 20px;
@@ -3032,11 +3152,11 @@ LINK_GROUPS_TEMPLATE = '''
                     <div class="link-item" style="color:rgba(255,255,255,0.3);">... and {{ group.links|length - 5 }} more</div>
                     {% endif %}
                 </div>
-                <div class="btn-group">
-                    <button class="btn btn-primary" onclick="event.stopPropagation();copyToClipboard('{{ group.url }}')">📋 Copy Link</button>
-                    <button class="btn btn-success" onclick="event.stopPropagation();downloadGroupQR('{{ gid }}')">🧾 QR</button>
-                    <button class="btn btn-secondary" onclick="event.stopPropagation();window.open('{{ group.url }}', '_blank')">👁️ View</button>
-                    <button class="btn btn-danger" onclick="event.stopPropagation();deleteGroup('{{ gid }}')">🗑️ Delete</button>
+                <div class="action-menu">
+                    <button class="btn btn-sm-primary" onclick="event.stopPropagation();copyToClipboard('{{ group.url }}')">📋 Copy</button>
+                    <button class="btn btn-sm-success" onclick="event.stopPropagation();downloadGroupQR('{{ gid }}')">🧾 QR</button>
+                    <button class="btn btn-sm-secondary" onclick="event.stopPropagation();window.open('{{ group.url }}', '_blank')">👁️ View</button>
+                    <button class="btn btn-sm-danger" onclick="event.stopPropagation();deleteLinkGroup('{{ gid }}')">🗑️ Delete</button>
                 </div>
             </div>
             {% endfor %}
@@ -3060,10 +3180,10 @@ LINK_GROUPS_TEMPLATE = '''
     <div class="modal" id="confirmModal">
         <div class="modal-content">
             <h3>⚠️ Delete Entire Group?</h3>
-            <p>This will delete all links inside this group from Supabase.</p>
+            <p id="confirmMessage">This will delete all links inside this group from Supabase.</p>
             <div class="btn-group">
                 <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                <button class="btn btn-danger" id="confirmDelete">Delete Group</button>
+                <button class="btn btn-danger" id="confirmDeleteBtn">Delete Group</button>
             </div>
         </div>
     </div>
@@ -3091,10 +3211,11 @@ LINK_GROUPS_TEMPLATE = '''
                 });
         }
         
-        function deleteGroup(groupId) {
+        function deleteLinkGroup(groupId) {
             deleteTarget = groupId;
+            document.getElementById('confirmMessage').textContent = 'This will delete all links inside this group from Supabase.';
             document.getElementById('confirmModal').style.display = 'flex';
-            document.getElementById('confirmDelete').onclick = function() {
+            document.getElementById('confirmDeleteBtn').onclick = function() {
                 closeModal();
                 if (!deleteTarget) return;
                 fetch('/api/delete-link-group/' + deleteTarget, { method: 'DELETE' })
@@ -3102,8 +3223,7 @@ LINK_GROUPS_TEMPLATE = '''
                     .then(data => {
                         if (data.success) {
                             showToast('✅ Group deleted from Supabase!', 'success');
-                            const card = document.querySelector(`.group-card[data-groupid="${deleteTarget}"]`);
-                            if (card) card.remove();
+                            location.reload();
                         } else {
                             showToast('❌ Delete failed!', 'error');
                         }
@@ -3144,14 +3264,7 @@ GROUP_VIEW_TEMPLATE = '''
             color: #fff;
         }
         .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
-            flex-wrap: wrap;
-            gap: 15px;
-        }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 15px; }
         .header h1 { font-size: 1.8em; }
         .header h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
         .btn-back {
@@ -3175,6 +3288,26 @@ GROUP_VIEW_TEMPLATE = '''
         .group-meta .info div { color: rgba(255,255,255,0.6); }
         .group-meta .info div strong { color: #fff; }
         .group-meta .url { color: #667eea; word-break: break-all; margin-top: 10px; }
+        .group-meta .action-menu { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .btn {
+            padding: 6px 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.85em;
+            cursor: pointer;
+            transition: all 0.3s;
+            color: #fff;
+        }
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-primary:hover { transform: scale(1.05); }
+        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-success:hover { transform: scale(1.05); }
+        .btn-warning { background: linear-gradient(135deg, #f093fb, #f5576c); }
+        .btn-warning:hover { transform: scale(1.05); }
+        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-danger:hover { transform: scale(1.05); }
+        .btn-secondary { background: rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
         .gallery-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
@@ -3185,56 +3318,27 @@ GROUP_VIEW_TEMPLATE = '''
             border-radius: 12px;
             overflow: hidden;
             transition: all 0.3s;
-            cursor: pointer;
             position: relative;
         }
-        .gallery-item:hover { 
-            transform: translateY(-5px); 
-            background: rgba(255, 255, 255, 0.08);
-            box-shadow: 0 10px 40px rgba(102, 126, 234, 0.2);
-        }
-        .gallery-item img { 
-            width: 100%; 
-            height: 200px; 
-            object-fit: cover; 
-            transition: transform 0.3s;
-        }
+        .gallery-item:hover { transform: translateY(-5px); background: rgba(255, 255, 255, 0.08); box-shadow: 0 10px 40px rgba(102, 126, 234, 0.2); }
+        .gallery-item img { width: 100%; height: 200px; object-fit: cover; transition: transform 0.3s; cursor: pointer; }
         .gallery-item:hover img { transform: scale(1.05); }
-        .gallery-item .name { 
-            padding: 12px; 
-            font-size: 0.85em; 
-            color: rgba(255,255,255,0.7); 
-            text-align: center; 
-            word-break: break-all;
-        }
-        .gallery-item .overlay {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: rgba(0,0,0,0.6);
-            padding: 5px 10px;
-            border-radius: 8px;
-            font-size: 0.7em;
-            color: rgba(255,255,255,0.6);
-        }
-        .btn {
-            padding: 8px 18px;
+        .gallery-item .name { padding: 12px; font-size: 0.85em; color: rgba(255,255,255,0.7); text-align: center; word-break: break-all; }
+        .gallery-item .item-actions { display: flex; justify-content: center; gap: 5px; padding: 0 10px 10px; flex-wrap: wrap; }
+        .gallery-item .overlay { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.6); padding: 5px 10px; border-radius: 8px; font-size: 0.7em; color: rgba(255,255,255,0.6); }
+        .btn-sm {
+            padding: 3px 8px;
             border: none;
-            border-radius: 8px;
-            font-size: 0.9em;
+            border-radius: 4px;
+            font-size: 0.6em;
             cursor: pointer;
             transition: all 0.3s;
             color: #fff;
-            text-decoration: none;
-            display: inline-block;
         }
-        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
-        .btn-primary:hover { transform: scale(1.05); }
-        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
-        .btn-success:hover { transform: scale(1.05); }
-        .btn-secondary { background: rgba(255,255,255,0.1); }
-        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
-        .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
+        .btn-sm-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-sm-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-sm-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-sm-warning { background: linear-gradient(135deg, #f093fb, #f5576c); }
         .qr-container { text-align: center; padding: 15px; background: #fff; border-radius: 12px; display: inline-block; }
         .qr-container img { max-width: 180px; }
         .toast-container {
@@ -3258,10 +3362,29 @@ GROUP_VIEW_TEMPLATE = '''
         }
         .toast.success { border-left: 4px solid #51cf66; }
         .toast.error { border-left: 4px solid #ff6b6b; }
-        @keyframes slideIn {
-            from { transform: translateX(100px); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
+        @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(5px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
         }
+        .modal-content {
+            background: #1a1a2e;
+            padding: 30px;
+            border-radius: 20px;
+            max-width: 400px;
+            width: 90%;
+            text-align: center;
+        }
+        .modal-content h3 { margin-bottom: 15px; }
+        .modal-content p { color: rgba(255,255,255,0.7); margin-bottom: 20px; }
+        .modal .btn-group { justify-content: center; }
         @media (max-width: 600px) {
             .container { padding: 15px; }
             .header h1 { font-size: 1.3em; }
@@ -3286,9 +3409,10 @@ GROUP_VIEW_TEMPLATE = '''
                 <div>👁️ <strong>{{ group.views }}</strong> views</div>
             </div>
             <div class="url">🔗 {{ group.url }}</div>
-            <div class="btn-group">
+            <div class="action-menu">
                 <button class="btn btn-primary" onclick="copyToClipboard('{{ group.url }}')">📋 Copy Group Link</button>
                 <button class="btn btn-success" onclick="downloadGroupQR()">⬇️ Download QR</button>
+                <button class="btn btn-warning" onclick="regenerateGroupLink()">🔄 Regenerate Link</button>
             </div>
             <div style="margin-top:15px;">
                 <div class="qr-container">
@@ -3300,10 +3424,15 @@ GROUP_VIEW_TEMPLATE = '''
         
         <div class="gallery-grid">
             {% for img in group.images %}
-            <div class="gallery-item" onclick="location.href='{{ url_for('single_image', filename=img.filename) }}?group={{ group.id }}'">
-                <img src="{{ img.url }}" alt="{{ img.original_name }}" loading="lazy">
+            <div class="gallery-item" data-filename="{{ img.filename }}">
+                <img src="{{ img.url }}" alt="{{ img.original_name }}" loading="lazy" onclick="location.href='{{ url_for('single_image', filename=img.filename) }}?group={{ group.id }}'">
                 <div class="name">📸 {{ img.original_name }}</div>
                 <div class="overlay">🔗 View</div>
+                <div class="item-actions">
+                    <button class="btn-sm btn-sm-primary" onclick="event.stopPropagation();copyToClipboard('{{ img.url }}')">📋 Copy</button>
+                    <button class="btn-sm btn-sm-success" onclick="event.stopPropagation();downloadImageQR('{{ img.filename }}')">🧾 QR</button>
+                    <button class="btn-sm btn-sm-danger" onclick="event.stopPropagation();deleteImageFromGroup('{{ group.id }}','{{ img.filename }}')">🗑️</button>
+                </div>
             </div>
             {% endfor %}
         </div>
@@ -3315,7 +3444,21 @@ GROUP_VIEW_TEMPLATE = '''
     
     <div class="toast-container" id="toastContainer"></div>
     
+    <div class="modal" id="confirmModal">
+        <div class="modal-content">
+            <h3>⚠️ Are You Sure?</h3>
+            <p id="confirmMessage">Do you really want to delete this image from the group?</p>
+            <div class="btn-group">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-danger" id="confirmDeleteBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+    
     <script>
+        let deleteGroupId = null;
+        let deleteFilename = null;
+        
         function copyToClipboard(text) {
             navigator.clipboard.writeText(text).then(() => {
                 showToast('✅ Link copied!', 'success');
@@ -3333,6 +3476,59 @@ GROUP_VIEW_TEMPLATE = '''
                 link.click();
                 showToast('✅ QR Code downloaded!', 'success');
             }
+        }
+        
+        function downloadImageQR(filename) {
+            fetch('/api/qr/' + filename)
+                .then(res => res.json())
+                .then(data => {
+                    const link = document.createElement('a');
+                    link.download = 'qr_' + filename + '.png';
+                    link.href = 'data:image/png;base64,' + data.qr;
+                    link.click();
+                    showToast('✅ QR Code downloaded!', 'success');
+                });
+        }
+        
+        function regenerateGroupLink() {
+            if (!confirm('Are you sure you want to regenerate this group link?')) return;
+            fetch('/api/regenerate-link/group/{{ group.id }}', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast('✅ Link regenerated!', 'success');
+                        setTimeout(() => location.reload(), 1500);
+                    } else {
+                        showToast('❌ Failed to regenerate!', 'error');
+                    }
+                });
+        }
+        
+        function deleteImageFromGroup(groupId, filename) {
+            deleteGroupId = groupId;
+            deleteFilename = filename;
+            document.getElementById('confirmMessage').textContent = 'Do you really want to delete this image from the group?';
+            document.getElementById('confirmModal').style.display = 'flex';
+            document.getElementById('confirmDeleteBtn').onclick = function() {
+                closeModal();
+                if (!deleteGroupId || !deleteFilename) return;
+                fetch('/api/delete-group-image/' + deleteGroupId + '/' + deleteFilename, { method: 'DELETE' })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            showToast('✅ Image removed from group!', 'success');
+                            const item = document.querySelector(`.gallery-item[data-filename="${deleteFilename}"]`);
+                            if (item) item.remove();
+                            location.reload();
+                        } else {
+                            showToast('❌ Failed to remove image!', 'error');
+                        }
+                    });
+            };
+        }
+        
+        function closeModal() {
+            document.getElementById('confirmModal').style.display = 'none';
         }
         
         function showToast(message, type = 'success') {
@@ -3363,130 +3559,24 @@ SINGLE_IMAGE_TEMPLATE = '''
     <title>{{ image.original_name }} - TORIKUL IMAGE • LINK • QR SYSTEM</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #0a0a1a;
-            min-height: 100vh;
-            color: #fff;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-        .container { 
-            max-width: 1100px; 
-            width: 100%;
-            margin: 0 auto; 
-        }
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 25px;
-            flex-wrap: wrap;
-            gap: 15px;
-        }
-        .header h1 { 
-            font-size: 1.5em; 
-            word-break: break-all;
-        }
-        .header h1 span { 
-            background: linear-gradient(135deg, #667eea, #764ba2); 
-            -webkit-background-clip: text; 
-            -webkit-text-fill-color: transparent; 
-        }
-        .btn-back {
-            padding: 10px 20px;
-            background: rgba(255,255,255,0.06);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 10px;
-            color: #fff;
-            text-decoration: none;
-            transition: all 0.3s;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-        }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0a0a1a; min-height: 100vh; color: #fff; display: flex; justify-content: center; align-items: center; padding: 20px; }
+        .container { max-width: 1100px; width: 100%; margin: 0 auto; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; flex-wrap: wrap; gap: 15px; }
+        .header h1 { font-size: 1.5em; word-break: break-all; }
+        .header h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .btn-back { padding: 10px 20px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; color: #fff; text-decoration: none; transition: all 0.3s; display: inline-flex; align-items: center; gap: 8px; }
         .btn-back:hover { background: rgba(255,255,255,0.12); }
-        
-        .image-container {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            border-radius: 20px;
-            overflow: hidden;
-            padding: 20px;
-        }
-        .image-wrapper {
-            position: relative;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 400px;
-            background: rgba(0,0,0,0.3);
-            border-radius: 12px;
-            overflow: hidden;
-        }
-        .image-wrapper img {
-            max-width: 100%;
-            max-height: 70vh;
-            object-fit: contain;
-            border-radius: 8px;
-        }
-        
-        .image-info {
-            margin-top: 20px;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            background: rgba(255,255,255,0.03);
-            border-radius: 12px;
-            padding: 20px;
-        }
-        .image-info .info-item {
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-        }
-        .image-info .info-item .label {
-            color: rgba(255,255,255,0.4);
-            font-size: 0.8em;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .image-info .info-item .value {
-            color: #fff;
-            word-break: break-all;
-            font-size: 0.95em;
-        }
-        .image-info .info-item .value.url {
-            color: #667eea;
-            cursor: pointer;
-        }
-        .image-info .info-item .value.url:hover {
-            text-decoration: underline;
-        }
-        
-        .btn-group {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-top: 20px;
-            justify-content: center;
-        }
-        .btn {
-            padding: 12px 25px;
-            border: none;
-            border-radius: 10px;
-            font-size: 0.95em;
-            cursor: pointer;
-            transition: all 0.3s;
-            color: #fff;
-            font-weight: 500;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            text-decoration: none;
-        }
+        .image-container { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 20px; overflow: hidden; padding: 20px; }
+        .image-wrapper { position: relative; display: flex; justify-content: center; align-items: center; min-height: 400px; background: rgba(0,0,0,0.3); border-radius: 12px; overflow: hidden; }
+        .image-wrapper img { max-width: 100%; max-height: 70vh; object-fit: contain; border-radius: 8px; }
+        .image-info { margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 15px; background: rgba(255,255,255,0.03); border-radius: 12px; padding: 20px; }
+        .image-info .info-item { display: flex; flex-direction: column; gap: 5px; }
+        .image-info .info-item .label { color: rgba(255,255,255,0.4); font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.5px; }
+        .image-info .info-item .value { color: #fff; word-break: break-all; font-size: 0.95em; }
+        .image-info .info-item .value.url { color: #667eea; cursor: pointer; }
+        .image-info .info-item .value.url:hover { text-decoration: underline; }
+        .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; justify-content: center; }
+        .btn { padding: 12px 25px; border: none; border-radius: 10px; font-size: 0.95em; cursor: pointer; transition: all 0.3s; color: #fff; font-weight: 500; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
         .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
         .btn-primary:hover { transform: scale(1.05); box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3); }
         .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
@@ -3497,56 +3587,20 @@ SINGLE_IMAGE_TEMPLATE = '''
         .btn-secondary:hover { background: rgba(255,255,255,0.2); }
         .btn-warning { background: linear-gradient(135deg, #f093fb, #f5576c); }
         .btn-warning:hover { transform: scale(1.05); }
-        
-        .qr-section {
-            margin-top: 25px;
-            text-align: center;
-            padding: 20px;
-            background: rgba(255,255,255,0.03);
-            border-radius: 12px;
-            border: 1px solid rgba(255,255,255,0.05);
-        }
-        .qr-section .qr-container {
-            display: inline-block;
-            padding: 15px;
-            background: #fff;
-            border-radius: 12px;
-        }
-        .qr-section .qr-container img {
-            max-width: 200px;
-        }
-        .qr-section .qr-label {
-            color: rgba(255,255,255,0.4);
-            font-size: 0.85em;
-            margin-bottom: 10px;
-        }
-        
-        .toast-container {
-            position: fixed;
-            bottom: 30px;
-            right: 30px;
-            z-index: 999;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-        .toast {
-            padding: 14px 24px;
-            border-radius: 12px;
-            background: rgba(20, 20, 40, 0.95);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: #fff;
-            font-size: 0.95em;
-            animation: slideIn 0.3s ease-out;
-        }
+        .qr-section { margin-top: 25px; text-align: center; padding: 20px; background: rgba(255,255,255,0.03); border-radius: 12px; border: 1px solid rgba(255,255,255,0.05); }
+        .qr-section .qr-container { display: inline-block; padding: 15px; background: #fff; border-radius: 12px; }
+        .qr-section .qr-container img { max-width: 200px; }
+        .qr-section .qr-label { color: rgba(255,255,255,0.4); font-size: 0.85em; margin-bottom: 10px; }
+        .toast-container { position: fixed; bottom: 30px; right: 30px; z-index: 999; display: flex; flex-direction: column; gap: 10px; }
+        .toast { padding: 14px 24px; border-radius: 12px; background: rgba(20, 20, 40, 0.95); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); color: #fff; font-size: 0.95em; animation: slideIn 0.3s ease-out; }
         .toast.success { border-left: 4px solid #51cf66; }
         .toast.error { border-left: 4px solid #ff6b6b; }
-        @keyframes slideIn {
-            from { transform: translateX(100px); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
-        
+        @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); backdrop-filter: blur(5px); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-content { background: #1a1a2e; padding: 30px; border-radius: 20px; max-width: 400px; width: 90%; text-align: center; }
+        .modal-content h3 { margin-bottom: 15px; }
+        .modal-content p { color: rgba(255,255,255,0.7); margin-bottom: 20px; }
+        .modal .btn-group { justify-content: center; }
         @media (max-width: 768px) {
             .container { padding: 0; }
             .header h1 { font-size: 1.2em; }
@@ -3577,32 +3631,18 @@ SINGLE_IMAGE_TEMPLATE = '''
             </div>
             
             <div class="image-info">
-                <div class="info-item">
-                    <span class="label">📄 Filename</span>
-                    <span class="value">{{ image.original_name }}</span>
-                </div>
-                <div class="info-item">
-                    <span class="label">📦 Size</span>
-                    <span class="value">{{ image.size }}</span>
-                </div>
-                <div class="info-item">
-                    <span class="label">🕒 Uploaded</span>
-                    <span class="value">{{ image.upload_date }}</span>
-                </div>
-                <div class="info-item">
-                    <span class="label">🆔 Image ID</span>
-                    <span class="value" style="font-size:0.85em;color:rgba(255,255,255,0.5);">{{ image.filename }}</span>
-                </div>
-                <div class="info-item" style="grid-column: 1 / -1;">
-                    <span class="label">🔗 Image URL</span>
-                    <span class="value url" onclick="copyToClipboard('{{ image.url }}')">{{ image.url }}</span>
-                </div>
+                <div class="info-item"><span class="label">📄 Filename</span><span class="value">{{ image.original_name }}</span></div>
+                <div class="info-item"><span class="label">📦 Size</span><span class="value">{{ image.size }}</span></div>
+                <div class="info-item"><span class="label">🕒 Uploaded</span><span class="value">{{ image.upload_date }}</span></div>
+                <div class="info-item"><span class="label">🆔 Image ID</span><span class="value" style="font-size:0.85em;color:rgba(255,255,255,0.5);">{{ image.filename }}</span></div>
+                <div class="info-item" style="grid-column: 1 / -1;"><span class="label">🔗 Image URL</span><span class="value url" onclick="copyToClipboard('{{ image.url }}')">{{ image.url }}</span></div>
             </div>
             
             <div class="btn-group">
                 <button class="btn btn-primary" onclick="copyToClipboard('{{ image.url }}')">📋 Copy Link</button>
                 <button class="btn btn-success" onclick="downloadImage()">⬇️ Download Image</button>
                 <button class="btn btn-warning" onclick="toggleQR()">🧾 View QR</button>
+                <button class="btn btn-warning" onclick="regenerateImageLink()">🔄 Regenerate</button>
                 <a href="{{ back_url }}" class="btn btn-secondary">⬅️ Back to Gallery</a>
                 {% if session.get('logged_in') %}
                 <button class="btn btn-danger" onclick="deleteImage()">🗑️ Delete Image</button>
@@ -3611,12 +3651,8 @@ SINGLE_IMAGE_TEMPLATE = '''
             
             <div class="qr-section" id="qrSection" style="display: none;">
                 <div class="qr-label">🧾 QR Code for this Image</div>
-                <div class="qr-container">
-                    <img id="qrImg" alt="QR Code">
-                </div>
-                <div style="margin-top:10px;">
-                    <button class="btn btn-success" onclick="downloadQR()" style="padding:8px 20px;font-size:0.85em;">⬇️ Download QR</button>
-                </div>
+                <div class="qr-container"><img id="qrImg" alt="QR Code"></div>
+                <div style="margin-top:10px;"><button class="btn btn-success" onclick="downloadQR()" style="padding:8px 20px;font-size:0.85em;">⬇️ Download QR</button></div>
             </div>
         </div>
         
@@ -3627,8 +3663,8 @@ SINGLE_IMAGE_TEMPLATE = '''
     
     <div class="toast-container" id="toastContainer"></div>
     
-    <div class="modal" id="confirmModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);backdrop-filter:blur(5px);z-index:1000;justify-content:center;align-items:center;">
-        <div class="modal-content" style="background:#1a1a2e;padding:30px;border-radius:20px;max-width:400px;width:90%;text-align:center;">
+    <div class="modal" id="confirmModal" style="display:none;">
+        <div class="modal-content">
             <h3 style="margin-bottom:15px;">⚠️ Are You Sure?</h3>
             <p style="color:rgba(255,255,255,0.7);margin-bottom:20px;">Do you really want to delete this image from Cloudinary?</p>
             <div style="display:flex;gap:10px;justify-content:center;">
@@ -3688,6 +3724,20 @@ SINGLE_IMAGE_TEMPLATE = '''
             }
         }
         
+        function regenerateImageLink() {
+            if (!confirm('Are you sure you want to regenerate this image link and QR code?')) return;
+            fetch('/api/regenerate-link/image/{{ image.filename }}', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast('✅ Link and QR regenerated!', 'success');
+                        setTimeout(() => location.reload(), 1500);
+                    } else {
+                        showToast('❌ Failed to regenerate!', 'error');
+                    }
+                });
+        }
+        
         function deleteImage() {
             document.getElementById('confirmModal').style.display = 'flex';
             document.getElementById('confirmDeleteBtn').onclick = function() {
@@ -3697,9 +3747,7 @@ SINGLE_IMAGE_TEMPLATE = '''
                     .then(data => {
                         if (data.success) {
                             showToast('✅ Image deleted from Cloudinary!', 'success');
-                            setTimeout(() => {
-                                window.location.href = '{{ back_url }}';
-                            }, 1500);
+                            setTimeout(() => { window.location.href = '{{ back_url }}'; }, 1500);
                         } else {
                             showToast('❌ Delete failed!', 'error');
                         }
@@ -3723,13 +3771,9 @@ SINGLE_IMAGE_TEMPLATE = '''
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
                 const modal = document.getElementById('confirmModal');
-                if (modal.style.display === 'flex') {
-                    closeModal();
-                }
+                if (modal.style.display === 'flex') { closeModal(); }
                 const qrSection = document.getElementById('qrSection');
-                if (qrSection.style.display === 'block') {
-                    qrSection.style.display = 'none';
-                }
+                if (qrSection.style.display === 'block') { qrSection.style.display = 'none'; }
             }
         });
     </script>
@@ -3746,103 +3790,48 @@ LINK_GROUP_VIEW_TEMPLATE = '''
     <title>{{ group.name }} - TORIKUL IMAGE • LINK • QR SYSTEM</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #0a0a1a;
-            min-height: 100vh;
-            color: #fff;
-        }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0a0a1a; min-height: 100vh; color: #fff; }
         .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
-            flex-wrap: wrap;
-            gap: 15px;
-        }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 15px; }
         .header h1 { font-size: 1.8em; }
         .header h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .btn-back {
-            padding: 10px 20px;
-            background: rgba(255,255,255,0.06);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 10px;
-            color: #fff;
-            text-decoration: none;
-            transition: all 0.3s;
-        }
+        .btn-back { padding: 10px 20px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; color: #fff; text-decoration: none; transition: all 0.3s; }
         .btn-back:hover { background: rgba(255,255,255,0.12); }
-        .group-meta {
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            border-radius: 16px;
-            padding: 20px 25px;
-            margin-bottom: 30px;
-        }
+        .group-meta { background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 16px; padding: 20px 25px; margin-bottom: 30px; }
         .group-meta .info { display: flex; flex-wrap: wrap; gap: 20px; }
         .group-meta .info div { color: rgba(255,255,255,0.6); }
         .group-meta .info div strong { color: #fff; }
         .group-meta .url { color: #667eea; word-break: break-all; margin-top: 10px; }
-        .links-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 20px;
-        }
-        .link-card {
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            border-radius: 12px;
-            padding: 15px;
-        }
-        .link-card .link-url { color: #667eea; word-break: break-all; font-size: 0.85em; }
-        .link-card .qr-small { text-align: center; padding: 10px; background: #fff; border-radius: 8px; margin-top: 10px; }
-        .link-card .qr-small img { max-width: 120px; }
-        .btn {
-            padding: 8px 18px;
-            border: none;
-            border-radius: 8px;
-            font-size: 0.9em;
-            cursor: pointer;
-            transition: all 0.3s;
-            color: #fff;
-            text-decoration: none;
-            display: inline-block;
-        }
+        .group-meta .action-menu { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .btn { padding: 6px 14px; border: none; border-radius: 8px; font-size: 0.85em; cursor: pointer; transition: all 0.3s; color: #fff; }
         .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
         .btn-primary:hover { transform: scale(1.05); }
         .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
         .btn-success:hover { transform: scale(1.05); }
+        .btn-warning { background: linear-gradient(135deg, #f093fb, #f5576c); }
+        .btn-warning:hover { transform: scale(1.05); }
         .btn-secondary { background: rgba(255,255,255,0.1); }
         .btn-secondary:hover { background: rgba(255,255,255,0.2); }
-        .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
+        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-danger:hover { transform: scale(1.05); }
+        .links-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+        .link-card { background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.06); border-radius: 12px; padding: 15px; }
+        .link-card .link-url { color: #667eea; word-break: break-all; font-size: 0.85em; }
+        .link-card .qr-small { text-align: center; padding: 10px; background: #fff; border-radius: 8px; margin-top: 10px; }
+        .link-card .qr-small img { max-width: 120px; }
+        .link-card .card-actions { display: flex; gap: 5px; margin-top: 10px; flex-wrap: wrap; }
+        .btn-sm { padding: 3px 8px; border: none; border-radius: 4px; font-size: 0.6em; cursor: pointer; transition: all 0.3s; color: #fff; }
+        .btn-sm-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-sm-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-sm-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-sm-warning { background: linear-gradient(135deg, #f093fb, #f5576c); }
         .qr-container { text-align: center; padding: 15px; background: #fff; border-radius: 12px; display: inline-block; }
         .qr-container img { max-width: 180px; }
-        .toast-container {
-            position: fixed;
-            bottom: 30px;
-            right: 30px;
-            z-index: 999;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-        .toast {
-            padding: 14px 24px;
-            border-radius: 12px;
-            background: rgba(20, 20, 40, 0.95);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: #fff;
-            font-size: 0.95em;
-            animation: slideIn 0.3s ease-out;
-        }
+        .toast-container { position: fixed; bottom: 30px; right: 30px; z-index: 999; display: flex; flex-direction: column; gap: 10px; }
+        .toast { padding: 14px 24px; border-radius: 12px; background: rgba(20, 20, 40, 0.95); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); color: #fff; font-size: 0.95em; animation: slideIn 0.3s ease-out; }
         .toast.success { border-left: 4px solid #51cf66; }
         .toast.error { border-left: 4px solid #ff6b6b; }
-        @keyframes slideIn {
-            from { transform: translateX(100px); opacity: 0; }
-            to { transform: translateX(0); opacity: 1; }
-        }
+        @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
         @media (max-width: 600px) {
             .container { padding: 15px; }
             .header h1 { font-size: 1.3em; }
@@ -3866,9 +3855,10 @@ LINK_GROUP_VIEW_TEMPLATE = '''
                 <div>👁️ <strong>{{ group.views }}</strong> views</div>
             </div>
             <div class="url">🔗 {{ group.url }}</div>
-            <div class="btn-group">
+            <div class="action-menu">
                 <button class="btn btn-primary" onclick="copyToClipboard('{{ group.url }}')">📋 Copy Link</button>
                 <button class="btn btn-success" onclick="downloadGroupQR()">⬇️ Download QR</button>
+                <button class="btn btn-warning" onclick="regenerateGroupLink()">🔄 Regenerate</button>
             </div>
             <div style="margin-top:15px;">
                 <div class="qr-container">
@@ -3885,10 +3875,11 @@ LINK_GROUP_VIEW_TEMPLATE = '''
                 <div class="qr-small">
                     <img src="data:image/png;base64,{{ link.qr }}" alt="QR Code">
                 </div>
-                <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
-                    <button class="btn btn-primary" style="padding:4px 12px;font-size:0.8em;" onclick="copyToClipboard('{{ link.url }}')">📋 Copy</button>
-                    <button class="btn btn-success" style="padding:4px 12px;font-size:0.8em;" onclick="downloadLinkQR('{{ link.link_id }}')">⬇️ QR</button>
-                    <button class="btn btn-danger" style="padding:4px 12px;font-size:0.8em;" onclick="deleteLink('{{ link.link_id }}')">🗑️ Delete</button>
+                <div class="card-actions">
+                    <button class="btn-sm btn-sm-primary" onclick="copyToClipboard('{{ link.url }}')">📋 Copy</button>
+                    <button class="btn-sm btn-sm-success" onclick="downloadLinkQR('{{ link.link_id }}')">⬇️ QR</button>
+                    <button class="btn-sm btn-sm-warning" onclick="regenerateLink('{{ link.link_id }}')">🔄 Regen</button>
+                    <button class="btn-sm btn-sm-danger" onclick="deleteLink('{{ link.link_id }}')">🗑️ Delete</button>
                 </div>
             </div>
             {% endfor %}
@@ -3935,6 +3926,34 @@ LINK_GROUP_VIEW_TEMPLATE = '''
                 });
         }
         
+        function regenerateGroupLink() {
+            if (!confirm('Are you sure you want to regenerate this group link?')) return;
+            fetch('/api/regenerate-link/group/{{ group.id }}', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast('✅ Link regenerated!', 'success');
+                        setTimeout(() => location.reload(), 1500);
+                    } else {
+                        showToast('❌ Failed to regenerate!', 'error');
+                    }
+                });
+        }
+        
+        function regenerateLink(linkId) {
+            if (!confirm('Are you sure you want to regenerate this link and QR?')) return;
+            fetch('/api/regenerate-link/link/' + linkId, { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        showToast('✅ Link and QR regenerated!', 'success');
+                        setTimeout(() => location.reload(), 1500);
+                    } else {
+                        showToast('❌ Failed to regenerate!', 'error');
+                    }
+                });
+        }
+        
         function deleteLink(linkId) {
             if (!confirm('Are you sure you want to delete this link?')) return;
             fetch('/api/delete-link/' + linkId, { method: 'DELETE' })
@@ -3944,6 +3963,7 @@ LINK_GROUP_VIEW_TEMPLATE = '''
                         showToast('✅ Link deleted from Supabase!', 'success');
                         const card = document.querySelector(`.link-card[data-linkid="${linkId}"]`);
                         if (card) card.remove();
+                        location.reload();
                     } else {
                         showToast('❌ Delete failed!', 'error');
                     }
@@ -4051,7 +4071,8 @@ def gallery():
                 'url': data['url'],
                 'original_name': data.get('filename', filename),
                 'size': data.get('size', 'Unknown'),
-                'upload_date': data.get('upload_date', 'Unknown')[:10] if data.get('upload_date') else 'Unknown'
+                'upload_date': data.get('upload_date', 'Unknown')[:10] if data.get('upload_date') else 'Unknown',
+                'link_id': data.get('link_id')
             })
     return render_template_string(GALLERY_TEMPLATE, images=images)
 
@@ -4131,6 +4152,9 @@ def api_upload():
             
             if cloudinary_url:
                 file_size = get_file_size(file_path)
+                link_id = generate_unique_id()
+                full_url = request.url_root + 'image/' + unique_name + '?link=' + link_id
+                qr_base64 = generate_qr_code_base64(full_url)
                 
                 save_image_to_db(
                     filename=unique_name,
@@ -4138,15 +4162,21 @@ def api_upload():
                     url=cloudinary_url,
                     size=file_size,
                     file_type=ext.upper(),
-                    group_id=None
+                    group_id=None,
+                    link_id=link_id
                 )
+                
+                save_link_to_db(link_id, full_url, qr_base64, image_id=unique_name, link_type='image')
                 
                 uploaded_files.append({
                     'original_name': file.filename,
                     'url': cloudinary_url,
                     'size': file_size,
                     'type': ext.upper(),
-                    'filename': unique_name
+                    'filename': unique_name,
+                    'link_id': link_id,
+                    'link_url': full_url,
+                    'qr': qr_base64
                 })
                 
                 if os.path.exists(file_path):
@@ -4165,6 +4195,7 @@ def api_multiple_upload():
         return jsonify({'error': 'No files selected'}), 400
     
     group_id = generate_unique_id()
+    group_link_id = generate_unique_id()
     group_name = f"Image_Group_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     uploaded_files = []
     
@@ -4180,6 +4211,9 @@ def api_multiple_upload():
             
             if cloudinary_url:
                 file_size = get_file_size(file_path)
+                link_id = generate_unique_id()
+                full_url = request.url_root + 'image/' + unique_name + '?link=' + link_id
+                qr_base64 = generate_qr_code_base64(full_url)
                 
                 save_image_to_db(
                     filename=unique_name,
@@ -4187,91 +4221,53 @@ def api_multiple_upload():
                     url=cloudinary_url,
                     size=file_size,
                     file_type=ext.upper(),
-                    group_id=group_id
+                    group_id=group_id,
+                    link_id=link_id
                 )
+                
+                save_link_to_db(link_id, full_url, qr_base64, image_id=unique_name, link_type='image')
                 
                 uploaded_files.append({
                     'original_name': file.filename,
                     'url': cloudinary_url,
                     'size': file_size,
                     'type': ext.upper(),
-                    'filename': unique_name
+                    'filename': unique_name,
+                    'link_id': link_id,
+                    'link_url': full_url,
+                    'qr': qr_base64
                 })
                 
                 if os.path.exists(file_path):
                     os.remove(file_path)
     
     if uploaded_files:
-        group_url = request.host_url + 'group/' + group_id
+        group_url = request.url_root + 'group/' + group_id + '?link=' + group_link_id
+        group_qr = generate_qr_code_base64(group_url)
+        
         save_group_to_db(
             group_id=group_id,
             name=group_name,
             url=group_url,
             image_count=len(uploaded_files),
-            images=uploaded_files
+            images=uploaded_files,
+            link_id=group_link_id
         )
+        
+        save_link_to_db(group_link_id, group_url, group_qr, group_id=group_id, link_type='group')
         
         return jsonify({
             'success': True,
             'group_id': group_id,
             'group_url': group_url,
+            'group_qr': group_qr,
+            'group_link_id': group_link_id,
             'group_name': group_name,
             'files': uploaded_files,
             'count': len(uploaded_files)
         })
     
     return jsonify({'success': False, 'error': 'No files uploaded successfully'}), 400
-
-@app.route('/api/add-to-image-group', methods=['POST'])
-@login_required
-def api_add_to_image_group():
-    group_id = request.form.get('group_id')
-    if not group_id:
-        return jsonify({'error': 'Group ID required'}), 400
-    
-    if 'photos' not in request.files:
-        return jsonify({'error': 'No files uploaded'}), 400
-    
-    files = request.files.getlist('photos')
-    added = 0
-    
-    for file in files:
-        if file and file.filename != '' and allowed_file(file.filename):
-            ext = file.filename.rsplit('.', 1)[1].lower()
-            unique_id = generate_unique_id()
-            unique_name = f"{unique_id}.{ext}"
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
-            file.save(file_path)
-            
-            cloudinary_url = upload_to_cloudinary(file_path, unique_name)
-            
-            if cloudinary_url:
-                file_size = get_file_size(file_path)
-                
-                save_image_to_db(
-                    filename=unique_name,
-                    original_name=file.filename,
-                    url=cloudinary_url,
-                    size=file_size,
-                    file_type=ext.upper(),
-                    group_id=group_id
-                )
-                
-                image_data = {
-                    'original_name': file.filename,
-                    'url': cloudinary_url,
-                    'size': file_size,
-                    'type': ext.upper(),
-                    'filename': unique_name
-                }
-                
-                if add_image_to_group_db(group_id, image_data):
-                    added += 1
-                
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-    
-    return jsonify({'success': True, 'count': added})
 
 @app.route('/api/link-to-qr', methods=['POST'])
 @login_required
@@ -4288,7 +4284,7 @@ def api_link_to_qr():
     link_id = generate_unique_id()
     qr_base64 = generate_qr_code_base64(url)
     
-    save_link_to_db(link_id=link_id, url=url, qr=qr_base64)
+    save_link_to_db(link_id=link_id, url=url, qr=qr_base64, link_type='custom')
     
     return jsonify({
         'success': True,
@@ -4316,6 +4312,7 @@ def api_multiple_links_to_qr():
         return jsonify({'success': False, 'error': 'No valid URLs found'}), 400
     
     group_id = generate_unique_id()
+    group_link_id = generate_unique_id()
     group_name = f"Link_Group_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
     processed_links = []
@@ -4327,7 +4324,8 @@ def api_multiple_links_to_qr():
             link_id=link_id,
             url=url,
             qr=qr_base64,
-            group_id=group_id
+            group_id=group_id,
+            link_type='link_group'
         )
         
         processed_links.append({
@@ -4337,25 +4335,92 @@ def api_multiple_links_to_qr():
         })
     
     if processed_links:
-        group_url = request.host_url + 'link-group/' + group_id
+        group_url = request.url_root + 'link-group/' + group_id + '?link=' + group_link_id
+        group_qr = generate_qr_code_base64(group_url)
+        
         save_link_group_to_db(
             group_id=group_id,
             name=group_name,
             url=group_url,
             link_count=len(processed_links),
-            links=processed_links
+            links=processed_links,
+            link_id=group_link_id
         )
+        
+        save_link_to_db(group_link_id, group_url, group_qr, group_id=group_id, link_type='link_group')
         
         return jsonify({
             'success': True,
             'group_id': group_id,
             'group_url': group_url,
+            'group_qr': group_qr,
+            'group_link_id': group_link_id,
             'group_name': group_name,
             'links': processed_links,
             'count': len(processed_links)
         })
     
     return jsonify({'success': False, 'error': 'No links processed successfully'}), 400
+
+@app.route('/api/add-to-image-group', methods=['POST'])
+@login_required
+def api_add_to_image_group():
+    group_id = request.form.get('group_id')
+    if not group_id:
+        return jsonify({'error': 'Group ID required'}), 400
+    
+    if 'photos' not in request.files:
+        return jsonify({'error': 'No files uploaded'}), 400
+    
+    files = request.files.getlist('photos')
+    added = 0
+    
+    for file in files:
+        if file and file.filename != '' and allowed_file(file.filename):
+            ext = file.filename.rsplit('.', 1)[1].lower()
+            unique_id = generate_unique_id()
+            unique_name = f"{unique_id}.{ext}"
+            file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
+            file.save(file_path)
+            
+            cloudinary_url = upload_to_cloudinary(file_path, unique_name)
+            
+            if cloudinary_url:
+                file_size = get_file_size(file_path)
+                link_id = generate_unique_id()
+                full_url = request.url_root + 'image/' + unique_name + '?link=' + link_id
+                qr_base64 = generate_qr_code_base64(full_url)
+                
+                save_image_to_db(
+                    filename=unique_name,
+                    original_name=file.filename,
+                    url=cloudinary_url,
+                    size=file_size,
+                    file_type=ext.upper(),
+                    group_id=group_id,
+                    link_id=link_id
+                )
+                
+                save_link_to_db(link_id, full_url, qr_base64, image_id=unique_name, link_type='image')
+                
+                image_data = {
+                    'original_name': file.filename,
+                    'url': cloudinary_url,
+                    'size': file_size,
+                    'type': ext.upper(),
+                    'filename': unique_name,
+                    'link_id': link_id,
+                    'link_url': full_url,
+                    'qr': qr_base64
+                }
+                
+                if add_image_to_group_db(group_id, image_data):
+                    added += 1
+                
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+    
+    return jsonify({'success': True, 'count': added})
 
 @app.route('/api/add-to-link-group', methods=['POST'])
 @login_required
@@ -4380,7 +4445,8 @@ def api_add_to_link_group():
         link_id=link_id,
         url=url,
         qr=qr_base64,
-        group_id=group_id
+        group_id=group_id,
+        link_type='link_group'
     )
     
     link_data = {
@@ -4481,26 +4547,7 @@ def delete_image(filename):
 @app.route('/api/delete-link/<link_id>', methods=['DELETE'])
 @login_required
 def delete_link(link_id):
-    links_data = get_links_from_db()
-    
-    if link_id in links_data:
-        group_id = links_data[link_id].get('group_id')
-        
-        delete_link_from_db(link_id)
-        
-        if group_id:
-            link_groups_data = get_link_groups_from_db()
-            if group_id in link_groups_data:
-                link_groups_data[group_id]['links'] = [l for l in link_groups_data[group_id]['links'] if l['link_id'] != link_id]
-                link_groups_data[group_id]['link_count'] = len(link_groups_data[group_id]['links'])
-                try:
-                    supabase.table('link_groups').update({
-                        'links': json.dumps(link_groups_data[group_id]['links']),
-                        'link_count': link_groups_data[group_id]['link_count']
-                    }).eq('id', group_id).execute()
-                except Exception as e:
-                    print(f"Link group update error: {e}")
-        
+    if delete_link_from_db(link_id):
         return jsonify({'success': True, 'message': 'Link deleted successfully'})
     
     return jsonify({'success': False, 'message': 'Link not found'}), 404
@@ -4529,14 +4576,65 @@ def delete_group(group_id):
 @app.route('/api/delete-link-group/<group_id>', methods=['DELETE'])
 @login_required
 def delete_link_group(group_id):
-    link_groups_data = get_link_groups_from_db()
+    if delete_link_group_from_db(group_id):
+        return jsonify({'success': True, 'message': 'Link Group deleted successfully'})
     
-    if group_id not in link_groups_data:
-        return jsonify({'success': False, 'message': 'Link Group not found'}), 404
+    return jsonify({'success': False, 'message': 'Link Group not found'}), 404
+
+@app.route('/api/delete-group-image/<group_id>/<filename>', methods=['DELETE'])
+@login_required
+def api_delete_group_image(group_id, filename):
+    if delete_single_image_from_group(group_id, filename):
+        return jsonify({'success': True, 'message': 'Image removed from group'})
+    return jsonify({'success': False, 'error': 'Failed to remove image'}), 400
+
+@app.route('/api/regenerate-link/<item_type>/<item_id>', methods=['POST'])
+@login_required
+def api_regenerate_link(item_type, item_id):
+    result = regenerate_link_and_qr(item_type, item_id)
+    if result:
+        return jsonify({
+            'success': True,
+            'link_id': result['link_id'],
+            'url': result['url'],
+            'qr': result['qr']
+        })
+    return jsonify({'success': False, 'error': 'Failed to regenerate link'}), 400
+
+@app.route('/api/update-link/<link_id>', methods=['PUT'])
+@login_required
+def api_update_link(link_id):
+    data = request.get_json()
+    new_url = data.get('new_url')
+    if not new_url:
+        return jsonify({'success': False, 'error': 'New URL required'}), 400
     
-    delete_link_group_from_db(group_id)
+    links_data = get_links_from_db()
+    if link_id not in links_data:
+        return jsonify({'success': False, 'error': 'Link not found'}), 404
     
-    return jsonify({'success': True, 'message': 'Link Group deleted successfully'})
+    old_link = links_data[link_id]
+    
+    new_link_id = generate_unique_id()
+    qr_base64 = generate_qr_code_base64(new_url)
+    
+    delete_link_from_db(link_id)
+    
+    save_link_to_db(
+        link_id=new_link_id,
+        url=new_url,
+        qr=qr_base64,
+        group_id=old_link.get('group_id'),
+        image_id=old_link.get('image_id'),
+        link_type=old_link.get('link_type', 'image')
+    )
+    
+    return jsonify({
+        'success': True,
+        'new_link_id': new_link_id,
+        'url': new_url,
+        'qr': qr_base64
+    })
 
 @app.route('/image-file/<filename>')
 def serve_image(filename):
@@ -4553,32 +4651,23 @@ def internal_error(error):
 
 # ============ MAIN ============
 
-app = app
-
 if __name__ == '__main__':
     print("\n" + "="*60)
-    print("🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v5.0 (Database Powered)")
+    print("🔄 TORIKUL IMAGE • LINK • QR SYSTEM v6.0 (Advanced)")
     print("="*60)
     print(f"📁 Upload folder: {os.path.abspath(UPLOAD_FOLDER)}")
     print(f"🌐 Server: http://127.0.0.1:5000")
     print(f"🔑 Login: {ADMIN_USERNAME} / {ADMIN_PASSWORD}")
     print("="*60)
-    print("📌 Features:")
-    print("  📸 Single Image → URL + QR (Stored in Cloudinary)")
-    print("  📸📸 Multiple Images → Group + URL + QR (Stored in Cloudinary)")
-    print("  🔗 Single Link → QR (Stored in Supabase)")
-    print("  🔗🔗 Multiple Links → Link Group + QR (Stored in Supabase)")
-    print("  📁 Unlimited Groups")
-    print("  ➕ Add More to Existing Groups")
-    print("  🆔 All URLs have 'torikul' in ID")
-    print("  👁️ Group Gallery View")
-    print("  🖼️ Single Image View with Actions")
-    print("  ✅ Persistent Storage: Supabase + Cloudinary")
-    print("="*60)
-    print("⚠️ IMPORTANT: Set these environment variables:")
-    print("  SUPABASE_URL, SUPABASE_KEY")
-    print("  CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET")
-    print("  ADMIN_USERNAME, ADMIN_PASSWORD, SECRET_KEY")
+    print("📌 Advanced Features:")
+    print("  📋 Copy any Link")
+    print("  🗑️ Delete any Link")
+    print("  🖼️ Delete single image from Group")
+    print("  🔗 QR Code Link available")
+    print("  ✏️ Change/Update Links")
+    print("  🔄 Regenerate QR Codes")
+    print("  📦 Action Menu for every item")
+    print("  ✅ All changes update instantly")
     print("="*60)
     print("Press CTRL+C to stop\n")
     app.run(debug=True, host='0.0.0.0', port=5000)
