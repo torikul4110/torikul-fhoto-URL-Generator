@@ -1,3 +1,8 @@
+# ============================================================
+# TORIKUL IMAGE • LINK • QR SYSTEM v6.0 (Advanced)
+# Vercel Production Ready
+# ============================================================
+
 import os
 import sys
 import uuid
@@ -16,7 +21,10 @@ import cloudinary
 import cloudinary.uploader
 from supabase import create_client, Client
 
-# ============ YOUR CREDENTIALS (HARDCODED) ============
+# ============================================================
+# 1. CONFIGURATION & CREDENTIALS
+# ============================================================
+
 # Cloudinary Credentials
 CLOUDINARY_CLOUD_NAME = "dzn0efzl1"
 CLOUDINARY_API_KEY = "234878757997651"
@@ -31,7 +39,10 @@ ADMIN_USERNAME = "Torikul"
 ADMIN_PASSWORD = "@torikul_1999"
 SECRET_KEY = "my-secret-key-12345"
 
-# ============ SET ENVIRONMENT VARIABLES ============
+# ============================================================
+# 2. ENVIRONMENT VARIABLES SETUP
+# ============================================================
+
 os.environ['SUPABASE_URL'] = SUPABASE_URL
 os.environ['SUPABASE_KEY'] = SUPABASE_KEY
 os.environ['CLOUDINARY_CLOUD_NAME'] = CLOUDINARY_CLOUD_NAME
@@ -41,21 +52,49 @@ os.environ['ADMIN_USERNAME'] = ADMIN_USERNAME
 os.environ['ADMIN_PASSWORD'] = ADMIN_PASSWORD
 os.environ['SECRET_KEY'] = SECRET_KEY
 
-# ============ PRINT DEBUG INFO ============
+# ============================================================
+# 3. BASE URL CONFIGURATION (FIX FOR VERCEL)
+# ============================================================
+
+def get_base_url():
+    """Get the correct base URL for the application"""
+    # Check if running on Vercel
+    if os.environ.get('VERCEL'):
+        # Use environment variable if set, otherwise use the Vercel URL
+        return os.environ.get('BASE_URL', 'https://torikul-fhoto-url-generator.vercel.app')
+    else:
+        # Local development
+        return 'http://127.0.0.1:5000'
+
+# Set BASE_URL for the application
+BASE_URL = os.environ.get('BASE_URL', get_base_url())
+
+# ============================================================
+# 4. DEBUG & SYSTEM INFO
+# ============================================================
+
 print(f"🐍 Python version: {sys.version}")
 print(f"📂 Current directory: {os.getcwd()}")
-print("="*60)
+print("=" * 60)
 print("🔍 CREDENTIALS CHECK")
-print("="*60)
+print("=" * 60)
 print(f"✅ SUPABASE_URL: {SUPABASE_URL}")
 print(f"✅ CLOUDINARY_CLOUD_NAME: {CLOUDINARY_CLOUD_NAME}")
 print(f"✅ ADMIN_USERNAME: {ADMIN_USERNAME}")
-print("="*60)
+print(f"✅ BASE_URL: {BASE_URL}")
+print("=" * 60)
+
+# ============================================================
+# 5. FLASK APP INITIALIZATION
+# ============================================================
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 
-# ============ SUPABASE SETUP ============
+# ============================================================
+# 6. SUPABASE SETUP
+# ============================================================
+
 print("🔌 Connecting to Supabase...")
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -64,7 +103,10 @@ except Exception as e:
     print(f"❌ Supabase connection error: {e}")
     supabase = None
 
-# ============ CLOUDINARY SETUP ============
+# ============================================================
+# 7. CLOUDINARY SETUP
+# ============================================================
+
 print("☁️ Configuring Cloudinary...")
 try:
     cloudinary.config(
@@ -76,27 +118,40 @@ try:
 except Exception as e:
     print(f"❌ Cloudinary config error: {e}")
 
-# ============ FILE STORAGE ============
+# ============================================================
+# 8. FILE STORAGE CONFIGURATION
+# ============================================================
+
 BASE_DIR = tempfile.gettempdir() if not os.environ.get('VERCEL') else '/tmp'
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB
 
-# ============ ALLOWED EXTENSIONS ============
+# ============================================================
+# 9. CONSTANTS
+# ============================================================
+
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'}
 
-# ============ DATABASE FUNCTIONS ============
+# ============================================================
+# 10. HELPER FUNCTIONS
+# ============================================================
 
 def generate_unique_id():
+    """Generate a unique ID with 'torikul' suffix"""
     random_part = secrets.token_hex(4)
     return f"{random_part}torikul"
 
+
 def allowed_file(filename):
+    """Check if file extension is allowed"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+
 def get_file_size(filepath):
+    """Get human-readable file size"""
     size_bytes = os.path.getsize(filepath)
     for unit in ['B', 'KB', 'MB', 'GB']:
         if size_bytes < 1024.0:
@@ -104,7 +159,9 @@ def get_file_size(filepath):
         size_bytes /= 1024.0
     return f"{size_bytes:.1f} GB"
 
+
 def generate_qr_code_base64(url):
+    """Generate QR code as base64 string"""
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(url)
     qr.make(fit=True)
@@ -113,7 +170,9 @@ def generate_qr_code_base64(url):
     img.save(buffered, format="PNG")
     return base64.b64encode(buffered.getvalue()).decode()
 
+
 def validate_url(url):
+    """Validate URL format"""
     url_pattern = re.compile(
         r'^https?://'
         r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'
@@ -123,7 +182,9 @@ def validate_url(url):
         r'(?:/?|[/?]\S+)$', re.IGNORECASE)
     return re.match(url_pattern, url) is not None
 
+
 def login_required(f):
+    """Decorator to require login"""
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not session.get('logged_in'):
@@ -131,11 +192,15 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# ============ DATABASE OPERATIONS ============
+# ============================================================
+# 11. DATABASE OPERATIONS
+# ============================================================
 
 def upload_to_cloudinary(file_path, filename):
+    """Upload file to Cloudinary"""
     try:
-        result = cloudinary.uploader.upload(file_path, 
+        result = cloudinary.uploader.upload(
+            file_path,
             public_id=filename.replace('.', '_'),
             folder='torikul_images'
         )
@@ -144,7 +209,9 @@ def upload_to_cloudinary(file_path, filename):
         print(f"Cloudinary upload error: {e}")
         return None
 
+
 def save_image_to_db(filename, original_name, url, size, file_type, group_id=None, link_id=None):
+    """Save image metadata to Supabase"""
     if not supabase:
         print("❌ Supabase not initialized - Image not saved to database")
         return None
@@ -167,7 +234,9 @@ def save_image_to_db(filename, original_name, url, size, file_type, group_id=Non
         print(f"Database save error: {e}")
         return None
 
+
 def save_group_to_db(group_id, name, url, image_count, images, link_id=None):
+    """Save image group metadata to Supabase"""
     if not supabase:
         print("❌ Supabase not initialized - Group not saved to database")
         return None
@@ -189,7 +258,9 @@ def save_group_to_db(group_id, name, url, image_count, images, link_id=None):
         print(f"Database save error: {e}")
         return None
 
+
 def save_link_to_db(link_id, url, qr, group_id=None, image_id=None, link_type='image'):
+    """Save link metadata to Supabase"""
     if not supabase:
         print("❌ Supabase not initialized - Link not saved to database")
         return None
@@ -210,7 +281,9 @@ def save_link_to_db(link_id, url, qr, group_id=None, image_id=None, link_type='i
         print(f"Database save error: {e}")
         return None
 
+
 def save_link_group_to_db(group_id, name, url, link_count, links, link_id=None):
+    """Save link group metadata to Supabase"""
     if not supabase:
         print("❌ Supabase not initialized - Link group not saved to database")
         return None
@@ -232,7 +305,9 @@ def save_link_group_to_db(group_id, name, url, link_count, links, link_id=None):
         print(f"Database save error: {e}")
         return None
 
+
 def get_images_from_db():
+    """Retrieve all active images from Supabase"""
     if not supabase:
         print("⚠️ Supabase not connected, returning empty data")
         return {}
@@ -258,7 +333,9 @@ def get_images_from_db():
         print("⚠️ Returning empty data")
         return {}
 
+
 def get_groups_from_db():
+    """Retrieve all active image groups from Supabase"""
     if not supabase:
         print("⚠️ Supabase not connected, returning empty data")
         return {}
@@ -284,7 +361,9 @@ def get_groups_from_db():
         print("⚠️ Returning empty data")
         return {}
 
+
 def get_links_from_db():
+    """Retrieve all active links from Supabase"""
     if not supabase:
         print("⚠️ Supabase not connected, returning empty data")
         return {}
@@ -309,7 +388,9 @@ def get_links_from_db():
         print("⚠️ Returning empty data")
         return {}
 
+
 def get_link_groups_from_db():
+    """Retrieve all active link groups from Supabase"""
     if not supabase:
         print("⚠️ Supabase not connected, returning empty data")
         return {}
@@ -335,7 +416,9 @@ def get_link_groups_from_db():
         print("⚠️ Returning empty data")
         return {}
 
+
 def delete_image_from_db(filename):
+    """Soft delete image from Supabase"""
     if not supabase:
         print("⚠️ Supabase not connected")
         return False
@@ -346,7 +429,9 @@ def delete_image_from_db(filename):
         print(f"Database delete error: {e}")
         return False
 
+
 def delete_group_from_db(group_id):
+    """Soft delete group and its images from Supabase"""
     if not supabase:
         print("⚠️ Supabase not connected")
         return False
@@ -358,7 +443,9 @@ def delete_group_from_db(group_id):
         print(f"Database delete error: {e}")
         return False
 
+
 def delete_link_from_db(link_id):
+    """Soft delete link from Supabase"""
     if not supabase:
         print("⚠️ Supabase not connected")
         return False
@@ -369,7 +456,9 @@ def delete_link_from_db(link_id):
         print(f"Database delete error: {e}")
         return False
 
+
 def delete_link_group_from_db(group_id):
+    """Soft delete link group and its links from Supabase"""
     if not supabase:
         print("⚠️ Supabase not connected")
         return False
@@ -381,7 +470,9 @@ def delete_link_group_from_db(group_id):
         print(f"Database delete error: {e}")
         return False
 
+
 def increment_group_views(group_id):
+    """Increment view count for an image group"""
     if not supabase:
         return
     try:
@@ -392,7 +483,9 @@ def increment_group_views(group_id):
     except Exception as e:
         print(f"View increment error: {e}")
 
+
 def increment_link_group_views(group_id):
+    """Increment view count for a link group"""
     if not supabase:
         return
     try:
@@ -403,7 +496,9 @@ def increment_link_group_views(group_id):
     except Exception as e:
         print(f"View increment error: {e}")
 
+
 def add_image_to_group_db(group_id, image_data):
+    """Add image to an existing group"""
     if not supabase:
         return False
     try:
@@ -423,7 +518,9 @@ def add_image_to_group_db(group_id, image_data):
         print(f"Add to group error: {e}")
         return False
 
+
 def add_link_to_group_db(group_id, link_data):
+    """Add link to an existing link group"""
     if not supabase:
         return False
     try:
@@ -443,7 +540,9 @@ def add_link_to_group_db(group_id, link_data):
         print(f"Add to link group error: {e}")
         return False
 
+
 def regenerate_link_and_qr(item_type, item_id):
+    """Regenerate link and QR code for an item"""
     try:
         if item_type == 'image':
             image = supabase.table('images').select('*').eq('filename', item_id).execute()
@@ -451,7 +550,7 @@ def regenerate_link_and_qr(item_type, item_id):
                 return None
             
             new_link_id = generate_unique_id()
-            new_url = request.url_root + 'image/' + item_id + '?link=' + new_link_id
+            new_url = BASE_URL + '/image/' + item_id + '?link=' + new_link_id
             new_qr = generate_qr_code_base64(new_url)
             
             old_link_id = image.data[0].get('link_id')
@@ -469,7 +568,7 @@ def regenerate_link_and_qr(item_type, item_id):
                 return None
             
             new_link_id = generate_unique_id()
-            new_url = request.url_root + 'group/' + item_id + '?link=' + new_link_id
+            new_url = BASE_URL + '/group/' + item_id + '?link=' + new_link_id
             new_qr = generate_qr_code_base64(new_url)
             
             old_link_id = group.data[0].get('link_id')
@@ -481,12 +580,35 @@ def regenerate_link_and_qr(item_type, item_id):
             
             return {'link_id': new_link_id, 'url': new_url, 'qr': new_qr}
             
+        elif item_type == 'link':
+            link = supabase.table('links').select('*').eq('link_id', item_id).execute()
+            if not link.data:
+                return None
+            
+            new_link_id = generate_unique_id()
+            new_url = link.data[0]['url']
+            new_qr = generate_qr_code_base64(new_url)
+            
+            supabase.table('links').update({'is_active': False}).eq('link_id', item_id).execute()
+            save_link_to_db(
+                new_link_id, 
+                new_url, 
+                new_qr,
+                group_id=link.data[0].get('group_id'),
+                image_id=link.data[0].get('image_id'),
+                link_type=link.data[0].get('link_type', 'image')
+            )
+            
+            return {'link_id': new_link_id, 'url': new_url, 'qr': new_qr}
+            
         return None
     except Exception as e:
         print(f"Regenerate error: {e}")
         return None
 
+
 def delete_single_image_from_group(group_id, filename):
+    """Delete a single image from a group"""
     try:
         group = supabase.table('groups').select('images, image_count').eq('id', group_id).execute()
         if not group.data:
@@ -508,7 +630,9 @@ def delete_single_image_from_group(group_id, filename):
         print(f"Delete from group error: {e}")
         return False
 
-# ============ TEMPLATES ============
+# ============================================================
+# 12. TEMPLATES (HTML)
+# ============================================================
 
 LOGIN_TEMPLATE = '''
 <!DOCTYPE html>
@@ -1005,7 +1129,10 @@ DASHBOARD_TEMPLATE = '''
 </html>
 '''
 
-# ============ UPLOAD TEMPLATE ============
+# ============================================================
+# 13. UPLOAD TEMPLATE
+# ============================================================
+
 UPLOAD_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="bn">
@@ -3989,10 +4116,13 @@ LINK_GROUP_VIEW_TEMPLATE = '''
 </html>
 '''
 
-# ============ ROUTES ============
+# ============================================================
+# 14. ROUTES
+# ============================================================
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    """Login page"""
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
@@ -4010,20 +4140,26 @@ def login():
         return redirect(url_for('dashboard'))
     return render_template_string(LOGIN_TEMPLATE, error=None)
 
+
 @app.route('/logout')
 def logout():
+    """Logout and clear session"""
     session.clear()
     return redirect(url_for('login'))
 
+
 @app.route('/')
 def home():
+    """Home page redirect"""
     if session.get('logged_in'):
         return redirect(url_for('dashboard'))
     return redirect(url_for('login'))
 
+
 @app.route('/dashboard')
 @login_required
 def dashboard():
+    """Main dashboard"""
     images = get_images_from_db()
     groups = get_groups_from_db()
     links = get_links_from_db()
@@ -4031,7 +4167,8 @@ def dashboard():
     
     single_images = {k: v for k, v in images.items() if 'group_id' not in v or v['group_id'] is None}
     
-    return render_template_string(DASHBOARD_TEMPLATE,
+    return render_template_string(
+        DASHBOARD_TEMPLATE,
         total_images=len(single_images),
         total_links=len(links),
         total_groups=len(groups),
@@ -4039,29 +4176,39 @@ def dashboard():
         now=datetime.now()
     )
 
+
 @app.route('/upload')
 @login_required
 def upload():
+    """Single image upload page"""
     return render_template_string(UPLOAD_TEMPLATE)
+
 
 @app.route('/multiple-upload')
 @login_required
 def multiple_upload():
+    """Multiple image upload page"""
     return render_template_string(MULTIPLE_UPLOAD_TEMPLATE)
+
 
 @app.route('/link-to-qr')
 @login_required
 def link_qr():
+    """Single link to QR page"""
     return render_template_string(LINK_QR_TEMPLATE)
+
 
 @app.route('/multiple-links-to-qr')
 @login_required
 def multiple_link_qr():
+    """Multiple links to QR page"""
     return render_template_string(MULTIPLE_LINK_QR_TEMPLATE)
+
 
 @app.route('/gallery')
 @login_required
 def gallery():
+    """Gallery of all single images"""
     images_data = get_images_from_db()
     images = []
     for filename, data in images_data.items():
@@ -4076,20 +4223,26 @@ def gallery():
             })
     return render_template_string(GALLERY_TEMPLATE, images=images)
 
+
 @app.route('/groups')
 @login_required
 def groups():
+    """Image groups page"""
     groups_data = get_groups_from_db()
     return render_template_string(GROUPS_TEMPLATE, groups=groups_data)
+
 
 @app.route('/link-groups')
 @login_required
 def link_groups():
+    """Link groups page"""
     link_groups_data = get_link_groups_from_db()
     return render_template_string(LINK_GROUPS_TEMPLATE, groups=link_groups_data)
 
+
 @app.route('/group/<group_id>')
 def view_group(group_id):
+    """View a specific image group"""
     groups_data = get_groups_from_db()
     if group_id not in groups_data:
         return "Group not found", 404
@@ -4100,8 +4253,10 @@ def view_group(group_id):
     
     return render_template_string(GROUP_VIEW_TEMPLATE, group=group)
 
+
 @app.route('/image/<filename>')
 def single_image(filename):
+    """View a single image"""
     images_data = get_images_from_db()
     
     if filename not in images_data:
@@ -4111,14 +4266,17 @@ def single_image(filename):
     group_id = request.args.get('group')
     back_url = url_for('view_group', group_id=group_id) if group_id and group_id in get_groups_from_db() else url_for('gallery')
     
-    return render_template_string(SINGLE_IMAGE_TEMPLATE,
+    return render_template_string(
+        SINGLE_IMAGE_TEMPLATE,
         image=image_data,
         back_url=back_url,
         group_id=group_id
     )
 
+
 @app.route('/link-group/<group_id>')
 def view_link_group(group_id):
+    """View a specific link group"""
     link_groups_data = get_link_groups_from_db()
     if group_id not in link_groups_data:
         return "Link Group not found", 404
@@ -4129,11 +4287,14 @@ def view_link_group(group_id):
     
     return render_template_string(LINK_GROUP_VIEW_TEMPLATE, group=group)
 
-# ============ API ROUTES ============
+# ============================================================
+# 15. API ROUTES
+# ============================================================
 
 @app.route('/api/upload', methods=['POST'])
 @login_required
 def api_upload():
+    """API endpoint for single image upload"""
     if 'photos' not in request.files:
         return jsonify({'error': 'No files uploaded'}), 400
     
@@ -4153,7 +4314,7 @@ def api_upload():
             if cloudinary_url:
                 file_size = get_file_size(file_path)
                 link_id = generate_unique_id()
-                full_url = request.url_root + 'image/' + unique_name + '?link=' + link_id
+                full_url = BASE_URL + '/image/' + unique_name + '?link=' + link_id
                 qr_base64 = generate_qr_code_base64(full_url)
                 
                 save_image_to_db(
@@ -4184,9 +4345,11 @@ def api_upload():
     
     return jsonify({'success': True, 'files': uploaded_files})
 
+
 @app.route('/api/multiple-upload', methods=['POST'])
 @login_required
 def api_multiple_upload():
+    """API endpoint for multiple image upload"""
     if 'photos' not in request.files:
         return jsonify({'error': 'No files uploaded'}), 400
     
@@ -4212,7 +4375,7 @@ def api_multiple_upload():
             if cloudinary_url:
                 file_size = get_file_size(file_path)
                 link_id = generate_unique_id()
-                full_url = request.url_root + 'image/' + unique_name + '?link=' + link_id
+                full_url = BASE_URL + '/image/' + unique_name + '?link=' + link_id
                 qr_base64 = generate_qr_code_base64(full_url)
                 
                 save_image_to_db(
@@ -4242,7 +4405,7 @@ def api_multiple_upload():
                     os.remove(file_path)
     
     if uploaded_files:
-        group_url = request.url_root + 'group/' + group_id + '?link=' + group_link_id
+        group_url = BASE_URL + '/group/' + group_id + '?link=' + group_link_id
         group_qr = generate_qr_code_base64(group_url)
         
         save_group_to_db(
@@ -4269,9 +4432,11 @@ def api_multiple_upload():
     
     return jsonify({'success': False, 'error': 'No files uploaded successfully'}), 400
 
+
 @app.route('/api/link-to-qr', methods=['POST'])
 @login_required
 def api_link_to_qr():
+    """API endpoint to generate QR for a single link"""
     data = request.get_json()
     url = data.get('url', '').strip()
     
@@ -4293,9 +4458,11 @@ def api_link_to_qr():
         'qr': qr_base64
     })
 
+
 @app.route('/api/multiple-links-to-qr', methods=['POST'])
 @login_required
 def api_multiple_links_to_qr():
+    """API endpoint to generate QR for multiple links"""
     data = request.get_json()
     links = data.get('links', [])
     
@@ -4335,7 +4502,7 @@ def api_multiple_links_to_qr():
         })
     
     if processed_links:
-        group_url = request.url_root + 'link-group/' + group_id + '?link=' + group_link_id
+        group_url = BASE_URL + '/link-group/' + group_id + '?link=' + group_link_id
         group_qr = generate_qr_code_base64(group_url)
         
         save_link_group_to_db(
@@ -4362,9 +4529,11 @@ def api_multiple_links_to_qr():
     
     return jsonify({'success': False, 'error': 'No links processed successfully'}), 400
 
+
 @app.route('/api/add-to-image-group', methods=['POST'])
 @login_required
 def api_add_to_image_group():
+    """API endpoint to add images to an existing group"""
     group_id = request.form.get('group_id')
     if not group_id:
         return jsonify({'error': 'Group ID required'}), 400
@@ -4388,7 +4557,7 @@ def api_add_to_image_group():
             if cloudinary_url:
                 file_size = get_file_size(file_path)
                 link_id = generate_unique_id()
-                full_url = request.url_root + 'image/' + unique_name + '?link=' + link_id
+                full_url = BASE_URL + '/image/' + unique_name + '?link=' + link_id
                 qr_base64 = generate_qr_code_base64(full_url)
                 
                 save_image_to_db(
@@ -4422,9 +4591,11 @@ def api_add_to_image_group():
     
     return jsonify({'success': True, 'count': added})
 
+
 @app.route('/api/add-to-link-group', methods=['POST'])
 @login_required
 def api_add_to_link_group():
+    """API endpoint to add a link to an existing link group"""
     data = request.get_json()
     group_id = data.get('group_id')
     url = data.get('url', '').strip()
@@ -4460,9 +4631,11 @@ def api_add_to_link_group():
     
     return jsonify({'success': False, 'error': 'Failed to add link to group'}), 400
 
+
 @app.route('/api/validate-url', methods=['POST'])
 @login_required
 def api_validate_url():
+    """API endpoint to validate a URL"""
     data = request.get_json()
     url = data.get('url', '').strip()
     
@@ -4472,8 +4645,10 @@ def api_validate_url():
     is_valid = validate_url(url)
     return jsonify({'valid': is_valid})
 
+
 @app.route('/api/qr/<filename>')
 def generate_qr(filename):
+    """API endpoint to get QR code for an image"""
     images_data = get_images_from_db()
     if filename not in images_data:
         return jsonify({'error': 'Image not found'}), 404
@@ -4482,8 +4657,10 @@ def generate_qr(filename):
     qr_base64 = generate_qr_code_base64(url)
     return jsonify({'qr': qr_base64})
 
+
 @app.route('/api/qr-group/<group_id>')
 def generate_group_qr(group_id):
+    """API endpoint to get QR code for a group"""
     groups_data = get_groups_from_db()
     if group_id not in groups_data:
         return jsonify({'error': 'Group not found'}), 404
@@ -4492,17 +4669,21 @@ def generate_group_qr(group_id):
     qr_base64 = generate_qr_code_base64(url)
     return jsonify({'qr': qr_base64})
 
+
 @app.route('/api/qr-link/<link_id>')
 @login_required
 def generate_link_qr(link_id):
+    """API endpoint to get QR code for a link"""
     links_data = get_links_from_db()
     if link_id not in links_data:
         return jsonify({'error': 'Link not found'}), 404
     
     return jsonify({'qr': links_data[link_id]['qr']})
 
+
 @app.route('/api/qr-link-group/<group_id>')
 def generate_link_group_qr(group_id):
+    """API endpoint to get QR code for a link group"""
     link_groups_data = get_link_groups_from_db()
     if group_id not in link_groups_data:
         return jsonify({'error': 'Link Group not found'}), 404
@@ -4511,9 +4692,11 @@ def generate_link_group_qr(group_id):
     qr_base64 = generate_qr_code_base64(url)
     return jsonify({'qr': qr_base64})
 
+
 @app.route('/api/delete/<filename>', methods=['DELETE'])
 @login_required
 def delete_image(filename):
+    """API endpoint to delete an image"""
     images_data = get_images_from_db()
     
     if filename in images_data:
@@ -4544,17 +4727,21 @@ def delete_image(filename):
     
     return jsonify({'success': False, 'message': 'Image not found'}), 404
 
+
 @app.route('/api/delete-link/<link_id>', methods=['DELETE'])
 @login_required
 def delete_link(link_id):
+    """API endpoint to delete a link"""
     if delete_link_from_db(link_id):
         return jsonify({'success': True, 'message': 'Link deleted successfully'})
     
     return jsonify({'success': False, 'message': 'Link not found'}), 404
 
+
 @app.route('/api/delete-group/<group_id>', methods=['DELETE'])
 @login_required
 def delete_group(group_id):
+    """API endpoint to delete a group"""
     groups_data = get_groups_from_db()
     
     if group_id not in groups_data:
@@ -4573,24 +4760,30 @@ def delete_group(group_id):
     
     return jsonify({'success': True, 'message': 'Group deleted successfully'})
 
+
 @app.route('/api/delete-link-group/<group_id>', methods=['DELETE'])
 @login_required
 def delete_link_group(group_id):
+    """API endpoint to delete a link group"""
     if delete_link_group_from_db(group_id):
         return jsonify({'success': True, 'message': 'Link Group deleted successfully'})
     
     return jsonify({'success': False, 'message': 'Link Group not found'}), 404
 
+
 @app.route('/api/delete-group-image/<group_id>/<filename>', methods=['DELETE'])
 @login_required
 def api_delete_group_image(group_id, filename):
+    """API endpoint to delete a single image from a group"""
     if delete_single_image_from_group(group_id, filename):
         return jsonify({'success': True, 'message': 'Image removed from group'})
     return jsonify({'success': False, 'error': 'Failed to remove image'}), 400
 
+
 @app.route('/api/regenerate-link/<item_type>/<item_id>', methods=['POST'])
 @login_required
 def api_regenerate_link(item_type, item_id):
+    """API endpoint to regenerate link and QR"""
     result = regenerate_link_and_qr(item_type, item_id)
     if result:
         return jsonify({
@@ -4601,9 +4794,11 @@ def api_regenerate_link(item_type, item_id):
         })
     return jsonify({'success': False, 'error': 'Failed to regenerate link'}), 400
 
+
 @app.route('/api/update-link/<link_id>', methods=['PUT'])
 @login_required
 def api_update_link(link_id):
+    """API endpoint to update a link"""
     data = request.get_json()
     new_url = data.get('new_url')
     if not new_url:
@@ -4636,29 +4831,37 @@ def api_update_link(link_id):
         'qr': qr_base64
     })
 
+
 @app.route('/image-file/<filename>')
 def serve_image(filename):
+    """Serve uploaded images"""
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
 
 @app.errorhandler(404)
 def not_found(error):
+    """404 error handler"""
     return jsonify({'error': 'Not found'}), 404
+
 
 @app.errorhandler(500)
 def internal_error(error):
+    """500 error handler"""
     print(f"500 Error: {error}")
     return jsonify({'error': 'Internal server error'}), 500
 
-# ============ MAIN ============
+# ============================================================
+# 16. MAIN
+# ============================================================
 
 if __name__ == '__main__':
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("🔄 TORIKUL IMAGE • LINK • QR SYSTEM v6.0 (Advanced)")
-    print("="*60)
+    print("=" * 60)
     print(f"📁 Upload folder: {os.path.abspath(UPLOAD_FOLDER)}")
     print(f"🌐 Server: http://127.0.0.1:5000")
     print(f"🔑 Login: {ADMIN_USERNAME} / {ADMIN_PASSWORD}")
-    print("="*60)
+    print("=" * 60)
     print("📌 Advanced Features:")
     print("  📋 Copy any Link")
     print("  🗑️ Delete any Link")
@@ -4668,6 +4871,6 @@ if __name__ == '__main__':
     print("  🔄 Regenerate QR Codes")
     print("  📦 Action Menu for every item")
     print("  ✅ All changes update instantly")
-    print("="*60)
+    print("=" * 60)
     print("Press CTRL+C to stop\n")
     app.run(debug=True, host='0.0.0.0', port=5000)
