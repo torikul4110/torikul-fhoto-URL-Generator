@@ -1,8 +1,6 @@
 # ============================================================
-# TORIKUL IMAGE • LINK • QR SYSTEM v7.0 (FULL)
-# Complete system: login, clickable stats, unified dropdown actions,
-# single upload with group, multiple upload, link to QR, galleries,
-# groups, public view-only, and all management features.
+# TORIKUL IMAGE • LINK • QR SYSTEM v7.1 (FULL FIXED)
+# Complete system with fallback to local JSON when Supabase fails.
 # Vercel Production Ready
 # ============================================================
 
@@ -149,372 +147,473 @@ def validate_url(url):
     return re.match(pattern, url) is not None
 
 # ============================================================
-# 8. DATABASE OPERATIONS (Complete)
+# 8. DATABASE OPERATIONS WITH FALLBACK TO LOCAL JSON
 # ============================================================
 
-def upload_to_cloudinary(file_path, filename):
-    try:
-        result = cloudinary.uploader.upload(
-            file_path,
-            public_id=filename.replace('.', '_'),
-            folder='torikul_images'
-        )
-        return result['secure_url']
-    except Exception as e:
-        print(f"Cloudinary upload error: {e}")
-        return None
+# লোকাল JSON ফাইলের ডিরেক্টরি
+LOCAL_DATA_DIR = os.path.join(tempfile.gettempdir(), 'torikul_data')
+os.makedirs(LOCAL_DATA_DIR, exist_ok=True)
 
+IMAGES_JSON = os.path.join(LOCAL_DATA_DIR, 'images.json')
+GROUPS_JSON = os.path.join(LOCAL_DATA_DIR, 'groups.json')
+LINKS_JSON = os.path.join(LOCAL_DATA_DIR, 'links.json')
+LINK_GROUPS_JSON = os.path.join(LOCAL_DATA_DIR, 'link_groups.json')
+
+def load_local_json(filepath):
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_local_json(filepath, data):
+    try:
+        with open(filepath, 'w') as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"Error saving local JSON: {e}")
+
+# ---- IMAGES ----
 def save_image_to_db(filename, original_name, url, size, file_type, group_id=None, link_id=None):
-    if not supabase:
-        return None
-    try:
-        data = {
-            'filename': filename,
-            'original_name': original_name,
-            'url': url,
-            'size': size,
-            'type': file_type,
-            'upload_date': datetime.now().isoformat(),
-            'group_id': group_id,
-            'link_id': link_id or generate_unique_id(),
-            'views': 0,
-            'is_active': True
-        }
-        result = supabase.table('images').insert(data).execute()
-        return result.data[0] if result.data else None
-    except Exception as e:
-        print(f"Database save error: {e}")
-        return None
-
-def save_group_to_db(group_id, name, url, image_count, images, link_id=None):
-    if not supabase:
-        return None
-    try:
-        data = {
-            'id': group_id,
-            'name': name,
-            'url': url,
-            'image_count': image_count,
-            'images': json.dumps(images),
-            'created_at': datetime.now().isoformat(),
-            'views': 0,
-            'link_id': link_id or generate_unique_id(),
-            'is_active': True
-        }
-        result = supabase.table('groups').insert(data).execute()
-        return result.data[0] if result.data else None
-    except Exception as e:
-        print(f"Database save error: {e}")
-        return None
-
-def save_link_to_db(link_id, url, qr, group_id=None, image_id=None, link_type='image'):
-    if not supabase:
-        return None
-    try:
-        data = {
-            'link_id': link_id,
-            'url': url,
-            'qr': qr,
-            'group_id': group_id,
-            'image_id': image_id,
-            'link_type': link_type,
-            'created_at': datetime.now().isoformat(),
-            'is_active': True
-        }
-        result = supabase.table('links').insert(data).execute()
-        return result.data[0] if result.data else None
-    except Exception as e:
-        print(f"Database save error: {e}")
-        return None
-
-def save_link_group_to_db(group_id, name, url, link_count, links, link_id=None):
-    if not supabase:
-        return None
-    try:
-        data = {
-            'id': group_id,
-            'name': name,
-            'url': url,
-            'link_count': link_count,
-            'links': json.dumps(links),
-            'created_at': datetime.now().isoformat(),
-            'views': 0,
-            'link_id': link_id or generate_unique_id(),
-            'is_active': True
-        }
-        result = supabase.table('link_groups').insert(data).execute()
-        return result.data[0] if result.data else None
-    except Exception as e:
-        print(f"Database save error: {e}")
-        return None
+    data = {
+        'filename': filename,
+        'original_name': original_name,
+        'url': url,
+        'size': size,
+        'type': file_type,
+        'upload_date': datetime.now().isoformat(),
+        'group_id': group_id,
+        'link_id': link_id or generate_unique_id(),
+        'views': 0,
+        'is_active': True
+    }
+    if supabase:
+        try:
+            result = supabase.table('images').insert(data).execute()
+            if result.data:
+                return result.data[0]
+        except Exception as e:
+            print(f"Supabase save error: {e}")
+    images = load_local_json(IMAGES_JSON)
+    images[filename] = data
+    save_local_json(IMAGES_JSON, images)
+    return data
 
 def get_images_from_db():
-    if not supabase:
-        return {}
-    try:
-        result = supabase.table('images').select('*').execute()
-        images = {}
-        for item in result.data:
-            if item.get('is_active', True):
-                images[item['filename']] = {
-                    'filename': item['original_name'],
-                    'url': item['url'],
-                    'size': item['size'],
-                    'type': item['type'],
-                    'upload_date': item['upload_date'],
-                    'group_id': item.get('group_id'),
-                    'link_id': item.get('link_id'),
-                    'views': item.get('views', 0),
-                    'is_active': item.get('is_active', True)
-                }
-        return images
-    except Exception as e:
-        print(f"Database fetch error: {e}")
-        return {}
+    if supabase:
+        try:
+            result = supabase.table('images').select('*').execute()
+            images = {}
+            for item in result.data:
+                if item.get('is_active', True):
+                    images[item['filename']] = {
+                        'filename': item['original_name'],
+                        'url': item['url'],
+                        'size': item['size'],
+                        'type': item['type'],
+                        'upload_date': item['upload_date'],
+                        'group_id': item.get('group_id'),
+                        'link_id': item.get('link_id'),
+                        'views': item.get('views', 0),
+                        'is_active': item.get('is_active', True)
+                    }
+            return images
+        except Exception as e:
+            print(f"Supabase fetch error: {e}")
+    return load_local_json(IMAGES_JSON)
+
+# ---- GROUPS ----
+def save_group_to_db(group_id, name, url, image_count, images, link_id=None):
+    data = {
+        'id': group_id,
+        'name': name,
+        'url': url,
+        'image_count': image_count,
+        'images': images,  # list of image dicts
+        'created_at': datetime.now().isoformat(),
+        'views': 0,
+        'link_id': link_id or generate_unique_id(),
+        'is_active': True
+    }
+    if supabase:
+        try:
+            supabase_data = data.copy()
+            supabase_data['images'] = json.dumps(images)
+            result = supabase.table('groups').insert(supabase_data).execute()
+            if result.data:
+                return result.data[0]
+        except Exception as e:
+            print(f"Supabase group save error: {e}")
+    groups = load_local_json(GROUPS_JSON)
+    groups[group_id] = data
+    save_local_json(GROUPS_JSON, groups)
+    return data
 
 def get_groups_from_db():
-    if not supabase:
-        return {}
-    try:
-        result = supabase.table('groups').select('*').execute()
-        groups = {}
-        for item in result.data:
-            if item.get('is_active', True):
-                groups[item['id']] = {
-                    'id': item['id'],
-                    'name': item['name'],
-                    'url': item['url'],
-                    'image_count': item['image_count'],
-                    'images': json.loads(item['images']) if item['images'] else [],
-                    'created_at': item['created_at'],
-                    'views': item.get('views', 0),
-                    'link_id': item.get('link_id'),
-                    'is_active': item.get('is_active', True)
-                }
-        return groups
-    except Exception as e:
-        print(f"Database fetch error: {e}")
-        return {}
+    if supabase:
+        try:
+            result = supabase.table('groups').select('*').execute()
+            groups = {}
+            for item in result.data:
+                if item.get('is_active', True):
+                    groups[item['id']] = {
+                        'id': item['id'],
+                        'name': item['name'],
+                        'url': item['url'],
+                        'image_count': item['image_count'],
+                        'images': json.loads(item['images']) if item['images'] else [],
+                        'created_at': item['created_at'],
+                        'views': item.get('views', 0),
+                        'link_id': item.get('link_id'),
+                        'is_active': item.get('is_active', True)
+                    }
+            return groups
+        except Exception as e:
+            print(f"Supabase group fetch error: {e}")
+    return load_local_json(GROUPS_JSON)
+
+# ---- LINKS ----
+def save_link_to_db(link_id, url, qr, group_id=None, image_id=None, link_type='image'):
+    data = {
+        'link_id': link_id,
+        'url': url,
+        'qr': qr,
+        'group_id': group_id,
+        'image_id': image_id,
+        'link_type': link_type,
+        'created_at': datetime.now().isoformat(),
+        'is_active': True
+    }
+    if supabase:
+        try:
+            result = supabase.table('links').insert(data).execute()
+            if result.data:
+                return result.data[0]
+        except Exception as e:
+            print(f"Supabase link save error: {e}")
+    links = load_local_json(LINKS_JSON)
+    links[link_id] = data
+    save_local_json(LINKS_JSON, links)
+    return data
 
 def get_links_from_db():
-    if not supabase:
-        return {}
-    try:
-        result = supabase.table('links').select('*').execute()
-        links = {}
-        for item in result.data:
-            if item.get('is_active', True):
-                links[item['link_id']] = {
-                    'link_id': item['link_id'],
-                    'url': item['url'],
-                    'qr': item['qr'],
-                    'group_id': item.get('group_id'),
-                    'image_id': item.get('image_id'),
-                    'link_type': item.get('link_type', 'image'),
-                    'created_at': item['created_at'],
-                    'is_active': item.get('is_active', True)
-                }
-        return links
-    except Exception as e:
-        print(f"Database fetch error: {e}")
-        return {}
+    if supabase:
+        try:
+            result = supabase.table('links').select('*').execute()
+            links = {}
+            for item in result.data:
+                if item.get('is_active', True):
+                    links[item['link_id']] = {
+                        'link_id': item['link_id'],
+                        'url': item['url'],
+                        'qr': item['qr'],
+                        'group_id': item.get('group_id'),
+                        'image_id': item.get('image_id'),
+                        'link_type': item.get('link_type', 'image'),
+                        'created_at': item['created_at'],
+                        'is_active': item.get('is_active', True)
+                    }
+            return links
+        except Exception as e:
+            print(f"Supabase link fetch error: {e}")
+    return load_local_json(LINKS_JSON)
+
+# ---- LINK GROUPS ----
+def save_link_group_to_db(group_id, name, url, link_count, links, link_id=None):
+    data = {
+        'id': group_id,
+        'name': name,
+        'url': url,
+        'link_count': link_count,
+        'links': links,
+        'created_at': datetime.now().isoformat(),
+        'views': 0,
+        'link_id': link_id or generate_unique_id(),
+        'is_active': True
+    }
+    if supabase:
+        try:
+            supabase_data = data.copy()
+            supabase_data['links'] = json.dumps(links)
+            result = supabase.table('link_groups').insert(supabase_data).execute()
+            if result.data:
+                return result.data[0]
+        except Exception as e:
+            print(f"Supabase link group save error: {e}")
+    link_groups = load_local_json(LINK_GROUPS_JSON)
+    link_groups[group_id] = data
+    save_local_json(LINK_GROUPS_JSON, link_groups)
+    return data
 
 def get_link_groups_from_db():
-    if not supabase:
-        return {}
-    try:
-        result = supabase.table('link_groups').select('*').execute()
-        link_groups = {}
-        for item in result.data:
-            if item.get('is_active', True):
-                link_groups[item['id']] = {
-                    'id': item['id'],
-                    'name': item['name'],
-                    'url': item['url'],
-                    'link_count': item['link_count'],
-                    'links': json.loads(item['links']) if item['links'] else [],
-                    'created_at': item['created_at'],
-                    'views': item.get('views', 0),
-                    'link_id': item.get('link_id'),
-                    'is_active': item.get('is_active', True)
-                }
-        return link_groups
-    except Exception as e:
-        print(f"Database fetch error: {e}")
-        return {}
+    if supabase:
+        try:
+            result = supabase.table('link_groups').select('*').execute()
+            link_groups = {}
+            for item in result.data:
+                if item.get('is_active', True):
+                    link_groups[item['id']] = {
+                        'id': item['id'],
+                        'name': item['name'],
+                        'url': item['url'],
+                        'link_count': item['link_count'],
+                        'links': json.loads(item['links']) if item['links'] else [],
+                        'created_at': item['created_at'],
+                        'views': item.get('views', 0),
+                        'link_id': item.get('link_id'),
+                        'is_active': item.get('is_active', True)
+                    }
+            return link_groups
+        except Exception as e:
+            print(f"Supabase link group fetch error: {e}")
+    return load_local_json(LINK_GROUPS_JSON)
 
+# ---- DELETE FUNCTIONS ----
 def delete_image_from_db(filename):
-    if not supabase:
-        return False
-    try:
-        supabase.table('images').update({'is_active': False}).eq('filename', filename).execute()
-        return True
-    except Exception as e:
-        print(f"Database delete error: {e}")
-        return False
+    if supabase:
+        try:
+            supabase.table('images').update({'is_active': False}).eq('filename', filename).execute()
+        except Exception as e:
+            print(f"Supabase delete error: {e}")
+    images = load_local_json(IMAGES_JSON)
+    if filename in images:
+        images[filename]['is_active'] = False
+        save_local_json(IMAGES_JSON, images)
+    return True
 
 def delete_group_from_db(group_id):
-    if not supabase:
-        return False
-    try:
-        supabase.table('images').update({'is_active': False}).eq('group_id', group_id).execute()
-        supabase.table('groups').update({'is_active': False}).eq('id', group_id).execute()
-        return True
-    except Exception as e:
-        print(f"Database delete error: {e}")
-        return False
+    if supabase:
+        try:
+            supabase.table('images').update({'is_active': False}).eq('group_id', group_id).execute()
+            supabase.table('groups').update({'is_active': False}).eq('id', group_id).execute()
+        except Exception as e:
+            print(f"Supabase delete error: {e}")
+    groups = load_local_json(GROUPS_JSON)
+    if group_id in groups:
+        groups[group_id]['is_active'] = False
+        save_local_json(GROUPS_JSON, groups)
+    return True
 
 def delete_link_from_db(link_id):
-    if not supabase:
-        return False
-    try:
-        supabase.table('links').update({'is_active': False}).eq('link_id', link_id).execute()
-        return True
-    except Exception as e:
-        print(f"Database delete error: {e}")
-        return False
+    if supabase:
+        try:
+            supabase.table('links').update({'is_active': False}).eq('link_id', link_id).execute()
+        except Exception as e:
+            print(f"Supabase delete error: {e}")
+    links = load_local_json(LINKS_JSON)
+    if link_id in links:
+        links[link_id]['is_active'] = False
+        save_local_json(LINKS_JSON, links)
+    return True
 
 def delete_link_group_from_db(group_id):
-    if not supabase:
-        return False
-    try:
-        supabase.table('links').update({'is_active': False}).eq('group_id', group_id).execute()
-        supabase.table('link_groups').update({'is_active': False}).eq('id', group_id).execute()
-        return True
-    except Exception as e:
-        print(f"Database delete error: {e}")
-        return False
+    if supabase:
+        try:
+            supabase.table('links').update({'is_active': False}).eq('group_id', group_id).execute()
+            supabase.table('link_groups').update({'is_active': False}).eq('id', group_id).execute()
+        except Exception as e:
+            print(f"Supabase delete error: {e}")
+    link_groups = load_local_json(LINK_GROUPS_JSON)
+    if group_id in link_groups:
+        link_groups[group_id]['is_active'] = False
+        save_local_json(LINK_GROUPS_JSON, link_groups)
+    return True
 
 def increment_group_views(group_id):
-    if not supabase:
-        return
-    try:
-        group = supabase.table('groups').select('views').eq('id', group_id).execute()
-        if group.data:
-            current_views = group.data[0].get('views', 0) + 1
-            supabase.table('groups').update({'views': current_views}).eq('id', group_id).execute()
-    except Exception as e:
-        print(f"View increment error: {e}")
+    if supabase:
+        try:
+            group = supabase.table('groups').select('views').eq('id', group_id).execute()
+            if group.data:
+                current_views = group.data[0].get('views', 0) + 1
+                supabase.table('groups').update({'views': current_views}).eq('id', group_id).execute()
+        except Exception as e:
+            print(f"View increment error: {e}")
+    groups = load_local_json(GROUPS_JSON)
+    if group_id in groups:
+        groups[group_id]['views'] = groups[group_id].get('views', 0) + 1
+        save_local_json(GROUPS_JSON, groups)
 
 def increment_link_group_views(group_id):
-    if not supabase:
-        return
-    try:
-        group = supabase.table('link_groups').select('views').eq('id', group_id).execute()
-        if group.data:
-            current_views = group.data[0].get('views', 0) + 1
-            supabase.table('link_groups').update({'views': current_views}).eq('id', group_id).execute()
-    except Exception as e:
-        print(f"View increment error: {e}")
+    if supabase:
+        try:
+            group = supabase.table('link_groups').select('views').eq('id', group_id).execute()
+            if group.data:
+                current_views = group.data[0].get('views', 0) + 1
+                supabase.table('link_groups').update({'views': current_views}).eq('id', group_id).execute()
+        except Exception as e:
+            print(f"View increment error: {e}")
+    link_groups = load_local_json(LINK_GROUPS_JSON)
+    if group_id in link_groups:
+        link_groups[group_id]['views'] = link_groups[group_id].get('views', 0) + 1
+        save_local_json(LINK_GROUPS_JSON, link_groups)
 
 def add_image_to_group_db(group_id, image_data):
-    if not supabase:
-        return False
-    try:
-        group = supabase.table('groups').select('images, image_count').eq('id', group_id).execute()
-        if group.data:
-            images = json.loads(group.data[0]['images']) if group.data[0]['images'] else []
-            images.append(image_data)
-            image_count = group.data[0]['image_count'] + 1
-            supabase.table('groups').update({
-                'images': json.dumps(images),
-                'image_count': image_count
-            }).eq('id', group_id).execute()
-            return True
-        return False
-    except Exception as e:
-        print(f"Add to group error: {e}")
-        return False
+    if supabase:
+        try:
+            group = supabase.table('groups').select('images, image_count').eq('id', group_id).execute()
+            if group.data:
+                images = json.loads(group.data[0]['images']) if group.data[0]['images'] else []
+                images.append(image_data)
+                image_count = group.data[0]['image_count'] + 1
+                supabase.table('groups').update({
+                    'images': json.dumps(images),
+                    'image_count': image_count
+                }).eq('id', group_id).execute()
+        except Exception as e:
+            print(f"Add to group error: {e}")
+    groups = load_local_json(GROUPS_JSON)
+    if group_id in groups:
+        groups[group_id]['images'].append(image_data)
+        groups[group_id]['image_count'] = len(groups[group_id]['images'])
+        save_local_json(GROUPS_JSON, groups)
+    return True
 
 def add_link_to_group_db(group_id, link_data):
-    if not supabase:
-        return False
-    try:
-        group = supabase.table('link_groups').select('links, link_count').eq('id', group_id).execute()
-        if group.data:
-            links = json.loads(group.data[0]['links']) if group.data[0]['links'] else []
-            links.append(link_data)
-            link_count = group.data[0]['link_count'] + 1
-            supabase.table('link_groups').update({
-                'links': json.dumps(links),
-                'link_count': link_count
-            }).eq('id', group_id).execute()
-            return True
-        return False
-    except Exception as e:
-        print(f"Add to link group error: {e}")
-        return False
+    if supabase:
+        try:
+            group = supabase.table('link_groups').select('links, link_count').eq('id', group_id).execute()
+            if group.data:
+                links = json.loads(group.data[0]['links']) if group.data[0]['links'] else []
+                links.append(link_data)
+                link_count = group.data[0]['link_count'] + 1
+                supabase.table('link_groups').update({
+                    'links': json.dumps(links),
+                    'link_count': link_count
+                }).eq('id', group_id).execute()
+        except Exception as e:
+            print(f"Add to link group error: {e}")
+    link_groups = load_local_json(LINK_GROUPS_JSON)
+    if group_id in link_groups:
+        link_groups[group_id]['links'].append(link_data)
+        link_groups[group_id]['link_count'] = len(link_groups[group_id]['links'])
+        save_local_json(LINK_GROUPS_JSON, link_groups)
+    return True
+
+def delete_single_image_from_group(group_id, filename):
+    if supabase:
+        try:
+            group = supabase.table('groups').select('images, image_count').eq('id', group_id).execute()
+            if group.data:
+                images = json.loads(group.data[0]['images']) if group.data[0]['images'] else []
+                images = [img for img in images if img['filename'] != filename]
+                image_count = len(images)
+                supabase.table('groups').update({
+                    'images': json.dumps(images),
+                    'image_count': image_count
+                }).eq('id', group_id).execute()
+        except Exception as e:
+            print(f"Delete from group error: {e}")
+    groups = load_local_json(GROUPS_JSON)
+    if group_id in groups:
+        groups[group_id]['images'] = [img for img in groups[group_id]['images'] if img['filename'] != filename]
+        groups[group_id]['image_count'] = len(groups[group_id]['images'])
+        save_local_json(GROUPS_JSON, groups)
+    delete_image_from_db(filename)
+    return True
 
 def regenerate_link_and_qr(item_type, item_id):
+    # This function is used in API; we use the save functions which have fallback,
+    # so it will work with local JSON too.
+    # Keep original logic as is; it uses save_link_to_db and update functions.
     try:
         if item_type == 'image':
             image = supabase.table('images').select('*').eq('filename', item_id).execute()
             if not image.data:
-                return None
-            new_link_id = generate_unique_id()
-            new_url = BASE_URL + '/view/image/' + item_id + '?link=' + new_link_id
-            new_qr = generate_qr_code_base64(new_url)
-            old_link_id = image.data[0].get('link_id')
-            if old_link_id:
-                supabase.table('links').update({'is_active': False}).eq('link_id', old_link_id).execute()
-            supabase.table('images').update({'link_id': new_link_id}).eq('filename', item_id).execute()
-            save_link_to_db(new_link_id, new_url, new_qr, image_id=item_id, link_type='image')
-            return {'link_id': new_link_id, 'url': new_url, 'qr': new_qr}
+                # Fallback: try local JSON
+                images = load_local_json(IMAGES_JSON)
+                if item_id not in images:
+                    return None
+                image_data = images[item_id]
+                old_link_id = image_data.get('link_id')
+                new_link_id = generate_unique_id()
+                new_url = BASE_URL + '/view/image/' + item_id + '?link=' + new_link_id
+                new_qr = generate_qr_code_base64(new_url)
+                # update image
+                images[item_id]['link_id'] = new_link_id
+                save_local_json(IMAGES_JSON, images)
+                save_link_to_db(new_link_id, new_url, new_qr, image_id=item_id, link_type='image')
+                return {'link_id': new_link_id, 'url': new_url, 'qr': new_qr}
+            else:
+                # Use Supabase
+                old_link_id = image.data[0].get('link_id')
+                new_link_id = generate_unique_id()
+                new_url = BASE_URL + '/view/image/' + item_id + '?link=' + new_link_id
+                new_qr = generate_qr_code_base64(new_url)
+                if old_link_id:
+                    supabase.table('links').update({'is_active': False}).eq('link_id', old_link_id).execute()
+                supabase.table('images').update({'link_id': new_link_id}).eq('filename', item_id).execute()
+                save_link_to_db(new_link_id, new_url, new_qr, image_id=item_id, link_type='image')
+                return {'link_id': new_link_id, 'url': new_url, 'qr': new_qr}
         elif item_type == 'group':
             group = supabase.table('groups').select('*').eq('id', item_id).execute()
             if not group.data:
-                return None
-            new_link_id = generate_unique_id()
-            new_url = BASE_URL + '/view/group/' + item_id + '?link=' + new_link_id
-            new_qr = generate_qr_code_base64(new_url)
-            old_link_id = group.data[0].get('link_id')
-            if old_link_id:
-                supabase.table('links').update({'is_active': False}).eq('link_id', old_link_id).execute()
-            supabase.table('groups').update({'link_id': new_link_id, 'url': new_url}).eq('id', item_id).execute()
-            save_link_to_db(new_link_id, new_url, new_qr, group_id=item_id, link_type='group')
-            return {'link_id': new_link_id, 'url': new_url, 'qr': new_qr}
+                groups = load_local_json(GROUPS_JSON)
+                if item_id not in groups:
+                    return None
+                group_data = groups[item_id]
+                old_link_id = group_data.get('link_id')
+                new_link_id = generate_unique_id()
+                new_url = BASE_URL + '/view/group/' + item_id + '?link=' + new_link_id
+                new_qr = generate_qr_code_base64(new_url)
+                groups[item_id]['link_id'] = new_link_id
+                groups[item_id]['url'] = new_url
+                save_local_json(GROUPS_JSON, groups)
+                save_link_to_db(new_link_id, new_url, new_qr, group_id=item_id, link_type='group')
+                return {'link_id': new_link_id, 'url': new_url, 'qr': new_qr}
+            else:
+                old_link_id = group.data[0].get('link_id')
+                new_link_id = generate_unique_id()
+                new_url = BASE_URL + '/view/group/' + item_id + '?link=' + new_link_id
+                new_qr = generate_qr_code_base64(new_url)
+                if old_link_id:
+                    supabase.table('links').update({'is_active': False}).eq('link_id', old_link_id).execute()
+                supabase.table('groups').update({'link_id': new_link_id, 'url': new_url}).eq('id', item_id).execute()
+                save_link_to_db(new_link_id, new_url, new_qr, group_id=item_id, link_type='group')
+                return {'link_id': new_link_id, 'url': new_url, 'qr': new_qr}
         elif item_type == 'link':
             link = supabase.table('links').select('*').eq('link_id', item_id).execute()
             if not link.data:
-                return None
-            new_link_id = generate_unique_id()
-            new_url = link.data[0]['url']
-            new_qr = generate_qr_code_base64(new_url)
-            supabase.table('links').update({'is_active': False}).eq('link_id', item_id).execute()
-            save_link_to_db(
-                new_link_id, 
-                new_url, 
-                new_qr,
-                group_id=link.data[0].get('group_id'),
-                image_id=link.data[0].get('image_id'),
-                link_type=link.data[0].get('link_type', 'image')
-            )
-            return {'link_id': new_link_id, 'url': new_url, 'qr': new_qr}
+                links = load_local_json(LINKS_JSON)
+                if item_id not in links:
+                    return None
+                link_data = links[item_id]
+                new_link_id = generate_unique_id()
+                new_url = link_data['url']
+                new_qr = generate_qr_code_base64(new_url)
+                links[item_id]['is_active'] = False
+                save_local_json(LINKS_JSON, links)
+                save_link_to_db(
+                    new_link_id, 
+                    new_url, 
+                    new_qr,
+                    group_id=link_data.get('group_id'),
+                    image_id=link_data.get('image_id'),
+                    link_type=link_data.get('link_type', 'image')
+                )
+                return {'link_id': new_link_id, 'url': new_url, 'qr': new_qr}
+            else:
+                new_link_id = generate_unique_id()
+                new_url = link.data[0]['url']
+                new_qr = generate_qr_code_base64(new_url)
+                supabase.table('links').update({'is_active': False}).eq('link_id', item_id).execute()
+                save_link_to_db(
+                    new_link_id, 
+                    new_url, 
+                    new_qr,
+                    group_id=link.data[0].get('group_id'),
+                    image_id=link.data[0].get('image_id'),
+                    link_type=link.data[0].get('link_type', 'image')
+                )
+                return {'link_id': new_link_id, 'url': new_url, 'qr': new_qr}
         return None
     except Exception as e:
         print(f"Regenerate error: {e}")
         return None
 
-def delete_single_image_from_group(group_id, filename):
-    try:
-        group = supabase.table('groups').select('images, image_count').eq('id', group_id).execute()
-        if not group.data:
-            return False
-        images = json.loads(group.data[0]['images']) if group.data[0]['images'] else []
-        images = [img for img in images if img['filename'] != filename]
-        image_count = len(images)
-        supabase.table('groups').update({
-            'images': json.dumps(images),
-            'image_count': image_count
-        }).eq('id', group_id).execute()
-        delete_image_from_db(filename)
-        return True
-    except Exception as e:
-        print(f"Delete from group error: {e}")
-        return False
-
 # ============================================================
-# 9. PUBLIC VIEW-ONLY TEMPLATES
+# 9. PUBLIC VIEW-ONLY TEMPLATES (minimal)
 # ============================================================
 
 PUBLIC_IMAGE_VIEW_TEMPLATE = '''
@@ -988,7 +1087,7 @@ LOGIN_TEMPLATE = '''
 '''
 
 # ============================================================
-# 11. ADMIN TEMPLATES (All Templates)
+# 11. ADMIN TEMPLATES (All Templates - unchanged)
 # ============================================================
 
 DASHBOARD_TEMPLATE = '''
@@ -4527,9 +4626,10 @@ def api_update_link(link_id):
 
 if __name__ == '__main__':
     print("\n" + "=" * 60)
-    print("🔄 TORIKUL IMAGE • LINK • QR SYSTEM v7.0 (FULL)")
+    print("🔄 TORIKUL IMAGE • LINK • QR SYSTEM v7.1 (FIXED)")
     print("=" * 60)
     print(f"📁 Upload folder: {os.path.abspath(UPLOAD_FOLDER)}")
+    print(f"📁 Local data folder: {LOCAL_DATA_DIR}")
     print(f"🌐 Server: http://127.0.0.1:5000")
     print("=" * 60)
     print("🔑 Login Credentials:")
@@ -4545,5 +4645,6 @@ if __name__ == '__main__':
     print("  /upload, /gallery, /groups, /link-groups, /api/*, etc.")
     print("=" * 60)
     print("✨ Features: Clickable stats, dropdown actions, single upload with group")
+    print("✨ Fallback: Local JSON storage when Supabase is unavailable")
     print("Press CTRL+C to stop\n")
     app.run(debug=True, host='0.0.0.0', port=5000)
