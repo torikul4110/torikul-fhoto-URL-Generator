@@ -1,95 +1,91 @@
 import os
 import uuid
-import tempfile
-import json
 import secrets
-import shutil
 from datetime import datetime
-from flask import Flask, render_template_string, request, send_from_directory, jsonify, session, redirect, url_for
+from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
 from functools import wraps
-import qrcode
 from io import BytesIO
 import base64
 import re
+from sqlalchemy import create_engine, Column, String, DateTime, Integer, Text, LargeBinary, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship
+import qrcode
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
-# File storage paths
-UPLOAD_FOLDER = os.path.join(tempfile.gettempdir(), 'uploads')
-DATA_FOLDER = os.path.join(tempfile.gettempdir(), 'data')
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(DATA_FOLDER, exist_ok=True)
+# ============ DATABASE SETUP ============
+DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///data.db')
+if DATABASE_URL.startswith('postgres://'):
+    DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=engine)
+Base = declarative_base()
 
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['DATA_FOLDER'] = DATA_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200MB
+# ============ MODELS ============
+class Image(Base):
+    __tablename__ = 'images'
+    id = Column(String(64), primary_key=True)
+    filename = Column(String(255))
+    data = Column(LargeBinary)
+    size = Column(String(20))
+    type = Column(String(10))
+    upload_date = Column(DateTime, default=datetime.utcnow)
+    group_id = Column(String(64), ForeignKey('groups.id'), nullable=True)
 
-# Login credentials
-ADMIN_USERNAME = "Torikul"
-ADMIN_PASSWORD = "@torikul_1999"
+class Group(Base):
+    __tablename__ = 'groups'
+    id = Column(String(64), primary_key=True)
+    name = Column(String(255))
+    url = Column(String(500))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    images = relationship('Image', backref='group', lazy='dynamic')
 
-# Allowed image extensions
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'}
+    @property
+    def image_count(self):
+        return self.images.count()
 
-# Data files
-IMAGES_FILE = os.path.join(DATA_FOLDER, 'images.json')
-GROUPS_FILE = os.path.join(DATA_FOLDER, 'groups.json')
-LINKS_FILE = os.path.join(DATA_FOLDER, 'links.json')
-LINK_GROUPS_FILE = os.path.join(DATA_FOLDER, 'link_groups.json')
+    @property
+    def image_list(self):
+        return [{'filename': img.id, 'url': request.host_url + 'image/' + img.id,
+                 'original_name': img.filename, 'size': img.size} for img in self.images]
 
-# ============ DATA MANAGEMENT ============
+class Link(Base):
+    __tablename__ = 'links'
+    id = Column(String(64), primary_key=True)
+    url = Column(String(500))
+    qr = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    group_id = Column(String(64), ForeignKey('link_groups.id'), nullable=True)
 
-def init_data_files():
-    for file_path in [IMAGES_FILE, GROUPS_FILE, LINKS_FILE, LINK_GROUPS_FILE]:
-        if not os.path.exists(file_path):
-            with open(file_path, 'w') as f:
-                json.dump({}, f)
+class LinkGroup(Base):
+    __tablename__ = 'link_groups'
+    id = Column(String(64), primary_key=True)
+    name = Column(String(255))
+    url = Column(String(500))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    links = relationship('Link', backref='link_group', lazy='dynamic')
 
-init_data_files()
+    @property
+    def link_count(self):
+        return self.links.count()
 
-def load_images():
-    with open(IMAGES_FILE, 'r') as f:
-        return json.load(f)
+    @property
+    def link_list(self):
+        return [{'link_id': l.id, 'url': l.url, 'qr': l.qr} for l in self.links]
 
-def save_images(images):
-    with open(IMAGES_FILE, 'w') as f:
-        json.dump(images, f, indent=2)
+Base.metadata.create_all(bind=engine)
 
-def load_groups():
-    with open(GROUPS_FILE, 'r') as f:
-        return json.load(f)
-
-def save_groups(groups):
-    with open(GROUPS_FILE, 'w') as f:
-        json.dump(groups, f, indent=2)
-
-def load_links():
-    with open(LINKS_FILE, 'r') as f:
-        return json.load(f)
-
-def save_links(links):
-    with open(LINKS_FILE, 'w') as f:
-        json.dump(links, f, indent=2)
-
-def load_link_groups():
-    with open(LINK_GROUPS_FILE, 'r') as f:
-        return json.load(f)
-
-def save_link_groups(link_groups):
-    with open(LINK_GROUPS_FILE, 'w') as f:
-        json.dump(link_groups, f, indent=2)
-
+# ============ HELPERS ============
 def generate_unique_id():
-    """Generate unique ID with 'torikul' suffix"""
-    random_part = secrets.token_hex(4)
-    return f"{random_part}torikul"
+    return secrets.token_hex(4) + 'torikul'
 
 def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'}
 
-def get_file_size(filepath):
-    size_bytes = os.path.getsize(filepath)
+def get_file_size(data):
+    size_bytes = len(data)
     for unit in ['B', 'KB', 'MB', 'GB']:
         if size_bytes < 1024.0:
             return f"{size_bytes:.1f} {unit}"
@@ -97,7 +93,6 @@ def get_file_size(filepath):
     return f"{size_bytes:.1f} GB"
 
 def generate_qr_code_base64(url):
-    """Generate QR code and return as base64 string"""
     qr = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(url)
     qr.make(fit=True)
@@ -107,26 +102,24 @@ def generate_qr_code_base64(url):
     return base64.b64encode(buffered.getvalue()).decode()
 
 def validate_url(url):
-    """Validate if the URL is valid"""
-    url_pattern = re.compile(
-        r'^https?://'  # http:// or https://
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
-        r'localhost|'  # localhost...
-        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
-        r'(?::\d+)?'  # optional port
+    pattern = re.compile(
+        r'^https?://'
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'
+        r'localhost|'
+        r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+        r'(?::\d+)?'
         r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-    return re.match(url_pattern, url) is not None
+    return re.match(pattern, url) is not None
 
 def login_required(f):
     @wraps(f)
-    def decorated_function(*args, **kwargs):
+    def decorated(*args, **kwargs):
         if not session.get('logged_in'):
             return redirect(url_for('login'))
         return f(*args, **kwargs)
-    return decorated_function
+    return decorated
 
 # ============ TEMPLATES ============
-
 LOGIN_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="bn">
@@ -591,7 +584,7 @@ DASHBOARD_TEMPLATE = '''
                 </a>
             </div>
             <div style="margin-top:40px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;padding:20px;">
-                🔨 Created by TORIKUL | 🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v4.0
+                🔨 Created by TORIKUL | 🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v5.0
             </div>
         </div>
     </div>
@@ -3810,16 +3803,12 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
-        
-        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+        if username == 'Torikul' and password == '@torikul_1999':
             session['logged_in'] = True
             session['username'] = username
             return redirect(url_for('dashboard'))
-        elif username != ADMIN_USERNAME:
-            return render_template_string(LOGIN_TEMPLATE, error='❌ Invalid Username! Please try again.', username=username)
         else:
-            return render_template_string(LOGIN_TEMPLATE, error='❌ Invalid Password! Please try again.', username=username)
-    
+            return render_template_string(LOGIN_TEMPLATE, error='Invalid credentials', username=username)
     if session.get('logged_in'):
         return redirect(url_for('dashboard'))
     return render_template_string(LOGIN_TEMPLATE, error=None)
@@ -3831,25 +3820,22 @@ def logout():
 
 @app.route('/')
 def home():
-    if session.get('logged_in'):
-        return redirect(url_for('dashboard'))
-    return redirect(url_for('login'))
+    return redirect(url_for('login') if not session.get('logged_in') else url_for('dashboard'))
 
 @app.route('/dashboard')
 @login_required
 def dashboard():
-    images = load_images()
-    groups = load_groups()
-    links = load_links()
-    link_groups = load_link_groups()
-    
-    single_images = {k: v for k, v in images.items() if 'group_id' not in v}
-    
+    db = SessionLocal()
+    total_images = db.query(Image).filter(Image.group_id == None).count()
+    total_links = db.query(Link).filter(Link.group_id == None).count()
+    total_groups = db.query(Group).count()
+    total_link_groups = db.query(LinkGroup).count()
+    db.close()
     return render_template_string(DASHBOARD_TEMPLATE,
-        total_images=len(single_images),
-        total_links=len(links),
-        total_groups=len(groups),
-        total_link_groups=len(link_groups),
+        total_images=total_images,
+        total_links=total_links,
+        total_groups=total_groups,
+        total_link_groups=total_link_groups,
         now=datetime.now()
     )
 
@@ -3876,168 +3862,182 @@ def multiple_link_qr():
 @app.route('/gallery')
 @login_required
 def gallery():
-    images_data = load_images()
-    images = []
-    for filename, data in images_data.items():
-        if 'group_id' not in data:
-            images.append({
-                'filename': filename,
-                'url': data['url'],
-                'original_name': data.get('filename', filename),
-                'size': data.get('size', 'Unknown'),
-                'upload_date': data.get('upload_date', 'Unknown')
-            })
+    db = SessionLocal()
+    imgs = db.query(Image).filter(Image.group_id == None).all()
+    images = [{'filename': img.id, 'url': request.host_url + 'image/' + img.id,
+               'original_name': img.filename, 'size': img.size,
+               'upload_date': img.upload_date.strftime('%Y-%m-%d %H:%M:%S')} for img in imgs]
+    db.close()
     return render_template_string(GALLERY_TEMPLATE, images=images)
 
 @app.route('/groups')
 @login_required
 def groups():
-    groups_data = load_groups()
+    db = SessionLocal()
+    groups = db.query(Group).all()
+    groups_data = {}
+    for g in groups:
+        groups_data[g.id] = {
+            'id': g.id,
+            'name': g.name,
+            'url': g.url,
+            'image_count': g.image_count,
+            'created_at': g.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            'images': g.image_list
+        }
+    db.close()
     return render_template_string(GROUPS_TEMPLATE, groups=groups_data)
 
 @app.route('/link-groups')
 @login_required
 def link_groups():
-    link_groups_data = load_link_groups()
-    return render_template_string(LINK_GROUPS_TEMPLATE, groups=link_groups_data)
+    db = SessionLocal()
+    lgs = db.query(LinkGroup).all()
+    groups_data = {}
+    for lg in lgs:
+        groups_data[lg.id] = {
+            'id': lg.id,
+            'name': lg.name,
+            'url': lg.url,
+            'link_count': lg.link_count,
+            'created_at': lg.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            'links': lg.link_list
+        }
+    db.close()
+    return render_template_string(LINK_GROUPS_TEMPLATE, groups=groups_data)
 
-# Admin view for a group (login required)
 @app.route('/group/<group_id>')
 @login_required
 def view_group(group_id):
-    groups_data = load_groups()
-    if group_id not in groups_data:
+    db = SessionLocal()
+    group = db.query(Group).filter_by(id=group_id).first()
+    db.close()
+    if not group:
         return "Group not found", 404
-    return render_template_string(GROUP_VIEW_TEMPLATE, group=groups_data[group_id])
-
-# Public view for a group (no login) – gallery + lightbox
-@app.route('/view-group/<group_id>')
-def view_group_public(group_id):
-    groups_data = load_groups()
-    if group_id not in groups_data:
-        return "Group not found", 404
-    group = groups_data[group_id]
-    images = group.get('images', [])
-    if not images:
-        return "No images in this group", 404
-    return render_template_string(PUBLIC_GROUP_VIEW_TEMPLATE, group=group, images=images)
+    return render_template_string(GROUP_VIEW_TEMPLATE, group={
+        'id': group.id,
+        'name': group.name,
+        'url': group.url,
+        'image_count': group.image_count,
+        'created_at': group.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+        'images': group.image_list
+    })
 
 @app.route('/link-group/<group_id>')
 @login_required
 def view_link_group(group_id):
-    link_groups_data = load_link_groups()
-    if group_id not in link_groups_data:
+    db = SessionLocal()
+    lg = db.query(LinkGroup).filter_by(id=group_id).first()
+    db.close()
+    if not lg:
         return "Link Group not found", 404
-    return render_template_string(LINK_GROUP_VIEW_TEMPLATE, group=link_groups_data[group_id])
+    return render_template_string(LINK_GROUP_VIEW_TEMPLATE, group={
+        'id': lg.id,
+        'name': lg.name,
+        'url': lg.url,
+        'link_count': lg.link_count,
+        'created_at': lg.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+        'links': lg.link_list
+    })
+
+@app.route('/view-group/<group_id>')
+def view_group_public(group_id):
+    db = SessionLocal()
+    group = db.query(Group).filter_by(id=group_id).first()
+    db.close()
+    if not group:
+        return "Group not found", 404
+    images = group.image_list
+    if not images:
+        return "No images in this group", 404
+    return render_template_string(PUBLIC_GROUP_VIEW_TEMPLATE, group=group, images=images)
+
+# ============ IMAGE SERVING ============
+@app.route('/image/<filename>')
+def serve_image(filename):
+    db = SessionLocal()
+    img = db.query(Image).filter_by(id=filename).first()
+    db.close()
+    if not img:
+        return "Image not found", 404
+    # Determine mimetype from extension
+    ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'png'
+    mime = 'image/' + ext
+    if ext == 'jpg' or ext == 'jpeg':
+        mime = 'image/jpeg'
+    elif ext == 'png':
+        mime = 'image/png'
+    elif ext == 'gif':
+        mime = 'image/gif'
+    elif ext == 'webp':
+        mime = 'image/webp'
+    elif ext == 'svg':
+        mime = 'image/svg+xml'
+    elif ext == 'ico':
+        mime = 'image/x-icon'
+    return app.response_class(img.data, mimetype=mime)
 
 # ============ API ROUTES ============
-
 @app.route('/api/upload', methods=['POST'])
 @login_required
 def api_upload():
     if 'photos' not in request.files:
-        return jsonify({'error': 'No files uploaded'}), 400
-    
+        return jsonify({'error': 'No files'}), 400
     files = request.files.getlist('photos')
-    uploaded_files = []
-    images_data = load_images()
-    
+    db = SessionLocal()
+    uploaded = []
     for file in files:
-        if file and file.filename != '' and allowed_file(file.filename):
+        if file and allowed_file(file.filename):
             ext = file.filename.rsplit('.', 1)[1].lower()
-            unique_id = generate_unique_id()
-            unique_name = f"{unique_id}.{ext}"
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
-            file.save(file_path)
-            
-            file_size = get_file_size(file_path)
-            full_url = request.host_url + 'image/' + unique_name
-            
-            images_data[unique_name] = {
-                'filename': file.filename,
-                'url': full_url,
-                'size': file_size,
-                'type': ext.upper(),
-                'upload_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'file_path': file_path
-            }
-            
-            uploaded_files.append({
-                'original_name': file.filename,
-                'url': full_url,
-                'size': file_size,
-                'type': ext.upper(),
-                'filename': unique_name
-            })
-    
-    save_images(images_data)
-    return jsonify({'success': True, 'files': uploaded_files})
+            fid = generate_unique_id() + '.' + ext
+            data = file.read()
+            size_str = get_file_size(data)
+            img = Image(id=fid, filename=file.filename, data=data, size=size_str, type=ext.upper())
+            db.add(img)
+            uploaded.append({'original_name': file.filename, 'url': request.host_url + 'image/' + fid,
+                             'size': size_str, 'type': ext.upper(), 'filename': fid})
+    db.commit()
+    db.close()
+    return jsonify({'success': True, 'files': uploaded})
 
 @app.route('/api/multiple-upload', methods=['POST'])
 @login_required
 def api_multiple_upload():
     if 'photos' not in request.files:
-        return jsonify({'error': 'No files uploaded'}), 400
-    
+        return jsonify({'error': 'No files'}), 400
     files = request.files.getlist('photos')
     if not files or files[0].filename == '':
         return jsonify({'error': 'No files selected'}), 400
-    
+
+    db = SessionLocal()
     group_id = generate_unique_id()
     group_name = f"Image_Group_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    uploaded_files = []
-    images_data = load_images()
-    groups_data = load_groups()
-    
+    uploaded = []
+
     for file in files:
-        if file and file.filename != '' and allowed_file(file.filename):
+        if file and allowed_file(file.filename):
             ext = file.filename.rsplit('.', 1)[1].lower()
-            unique_id = generate_unique_id()
-            unique_name = f"{unique_id}.{ext}"
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
-            file.save(file_path)
-            
-            file_size = get_file_size(file_path)
-            full_url = request.host_url + 'image/' + unique_name
-            
-            images_data[unique_name] = {
-                'filename': file.filename,
-                'url': full_url,
-                'size': file_size,
-                'type': ext.upper(),
-                'upload_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'file_path': file_path,
-                'group_id': group_id
-            }
-            
-            uploaded_files.append({
-                'original_name': file.filename,
-                'url': full_url,
-                'size': file_size,
-                'type': ext.upper(),
-                'filename': unique_name
-            })
-    
+            fid = generate_unique_id() + '.' + ext
+            data = file.read()
+            size_str = get_file_size(data)
+            img = Image(id=fid, filename=file.filename, data=data, size=size_str, type=ext.upper(), group_id=group_id)
+            db.add(img)
+            uploaded.append({'original_name': file.filename, 'url': request.host_url + 'image/' + fid,
+                             'size': size_str, 'type': ext.upper(), 'filename': fid})
+
     group_url = request.host_url + 'view-group/' + group_id
-    groups_data[group_id] = {
-        'id': group_id,
-        'name': group_name,
-        'url': group_url,
-        'image_count': len(uploaded_files),
-        'images': uploaded_files,
-        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
-    
-    save_images(images_data)
-    save_groups(groups_data)
-    
+    group = Group(id=group_id, name=group_name, url=group_url)
+    db.add(group)
+    db.commit()
+    db.close()
+
     return jsonify({
         'success': True,
         'group_id': group_id,
         'group_url': group_url,
         'group_name': group_name,
-        'files': uploaded_files,
-        'count': len(uploaded_files)
+        'files': uploaded,
+        'count': len(uploaded)
     })
 
 @app.route('/api/add-to-image-group', methods=['POST'])
@@ -4046,52 +4046,28 @@ def api_add_to_image_group():
     group_id = request.form.get('group_id')
     if not group_id:
         return jsonify({'error': 'Group ID required'}), 400
-    
     if 'photos' not in request.files:
-        return jsonify({'error': 'No files uploaded'}), 400
-    
-    files = request.files.getlist('photos')
-    groups_data = load_groups()
-    images_data = load_images()
-    
-    if group_id not in groups_data:
+        return jsonify({'error': 'No files'}), 400
+
+    db = SessionLocal()
+    group = db.query(Group).filter_by(id=group_id).first()
+    if not group:
+        db.close()
         return jsonify({'error': 'Group not found'}), 404
-    
+
+    files = request.files.getlist('photos')
     added = 0
     for file in files:
-        if file and file.filename != '' and allowed_file(file.filename):
+        if file and allowed_file(file.filename):
             ext = file.filename.rsplit('.', 1)[1].lower()
-            unique_id = generate_unique_id()
-            unique_name = f"{unique_id}.{ext}"
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
-            file.save(file_path)
-            
-            file_size = get_file_size(file_path)
-            full_url = request.host_url + 'image/' + unique_name
-            
-            images_data[unique_name] = {
-                'filename': file.filename,
-                'url': full_url,
-                'size': file_size,
-                'type': ext.upper(),
-                'upload_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'file_path': file_path,
-                'group_id': group_id
-            }
-            
-            groups_data[group_id]['images'].append({
-                'original_name': file.filename,
-                'url': full_url,
-                'size': file_size,
-                'type': ext.upper(),
-                'filename': unique_name
-            })
+            fid = generate_unique_id() + '.' + ext
+            data = file.read()
+            size_str = get_file_size(data)
+            img = Image(id=fid, filename=file.filename, data=data, size=size_str, type=ext.upper(), group_id=group_id)
+            db.add(img)
             added += 1
-    
-    groups_data[group_id]['image_count'] = len(groups_data[group_id]['images'])
-    save_images(images_data)
-    save_groups(groups_data)
-    
+    db.commit()
+    db.close()
     return jsonify({'success': True, 'count': added})
 
 @app.route('/api/link-to-qr', methods=['POST'])
@@ -4099,97 +4075,54 @@ def api_add_to_image_group():
 def api_link_to_qr():
     data = request.get_json()
     url = data.get('url', '').strip()
-    
     if not url:
-        return jsonify({'success': False, 'error': 'URL is required'}), 400
-    
+        return jsonify({'success': False, 'error': 'URL required'}), 400
     if not validate_url(url):
-        return jsonify({'success': False, 'error': 'Invalid URL format'}), 400
-    
+        return jsonify({'success': False, 'error': 'Invalid URL'}), 400
+
+    db = SessionLocal()
     link_id = generate_unique_id()
-    links_data = load_links()
-    
-    qr_base64 = generate_qr_code_base64(url)
-    
-    links_data[link_id] = {
-        'link_id': link_id,
-        'url': url,
-        'qr': qr_base64,
-        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
-    
-    save_links(links_data)
-    
-    return jsonify({
-        'success': True,
-        'link_id': link_id,
-        'url': url,
-        'qr': qr_base64
-    })
+    qr = generate_qr_code_base64(url)
+    link = Link(id=link_id, url=url, qr=qr)
+    db.add(link)
+    db.commit()
+    db.close()
+    return jsonify({'success': True, 'link_id': link_id, 'url': url, 'qr': qr})
 
 @app.route('/api/multiple-links-to-qr', methods=['POST'])
 @login_required
 def api_multiple_links_to_qr():
     data = request.get_json()
     links = data.get('links', [])
-    
-    if not links:
-        return jsonify({'success': False, 'error': 'No links provided'}), 400
-    
-    valid_links = []
-    for url in links:
-        url = url.strip()
-        if url and validate_url(url):
-            valid_links.append(url)
-    
+    valid_links = [url.strip() for url in links if url.strip() and validate_url(url.strip())]
     if not valid_links:
-        return jsonify({'success': False, 'error': 'No valid URLs found'}), 400
-    
+        return jsonify({'success': False, 'error': 'No valid URLs'}), 400
+
+    db = SessionLocal()
     group_id = generate_unique_id()
     group_name = f"Link_Group_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    
-    link_groups_data = load_link_groups()
-    links_data = load_links()
-    
-    processed_links = []
+    processed = []
+
     for url in valid_links:
-        link_id = generate_unique_id()
-        qr_base64 = generate_qr_code_base64(url)
-        
-        links_data[link_id] = {
-            'link_id': link_id,
-            'url': url,
-            'qr': qr_base64,
-            'group_id': group_id,
-            'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-        
-        processed_links.append({
-            'link_id': link_id,
-            'url': url,
-            'qr': qr_base64
-        })
-    
+        lid = generate_unique_id()
+        qr = generate_qr_code_base64(url)
+        link = Link(id=lid, url=url, qr=qr, group_id=group_id)
+        db.add(link)
+        processed.append({'link_id': lid, 'url': url, 'qr': qr})
+
     group_url = request.host_url + 'link-group/' + group_id
-    link_groups_data[group_id] = {
-        'id': group_id,
-        'name': group_name,
-        'url': group_url,
-        'link_count': len(processed_links),
-        'links': processed_links,
-        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
-    
-    save_links(links_data)
-    save_link_groups(link_groups_data)
-    
+    lg = LinkGroup(id=group_id, name=group_name, url=group_url)
+    db.add(lg)
+    db.commit()
+    db.close()
+
     return jsonify({
         'success': True,
         'group_id': group_id,
         'group_url': group_url,
         'group_name': group_name,
-        'links': processed_links,
-        'count': len(processed_links)
+        'links': processed,
+        'count': len(processed)
     })
 
 @app.route('/api/add-to-link-group', methods=['POST'])
@@ -4198,208 +4131,129 @@ def api_add_to_link_group():
     data = request.get_json()
     group_id = data.get('group_id')
     url = data.get('url', '').strip()
-    
-    if not group_id:
-        return jsonify({'error': 'Group ID required'}), 400
-    
-    if not url:
-        return jsonify({'error': 'URL is required'}), 400
-    
+    if not group_id or not url:
+        return jsonify({'error': 'Group ID and URL required'}), 400
     if not validate_url(url):
-        return jsonify({'error': 'Invalid URL format'}), 400
-    
-    link_groups_data = load_link_groups()
-    links_data = load_links()
-    
-    if group_id not in link_groups_data:
+        return jsonify({'error': 'Invalid URL'}), 400
+
+    db = SessionLocal()
+    lg = db.query(LinkGroup).filter_by(id=group_id).first()
+    if not lg:
+        db.close()
         return jsonify({'error': 'Group not found'}), 404
-    
-    link_id = generate_unique_id()
-    qr_base64 = generate_qr_code_base64(url)
-    
-    links_data[link_id] = {
-        'link_id': link_id,
-        'url': url,
-        'qr': qr_base64,
-        'group_id': group_id,
-        'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
-    
-    link_groups_data[group_id]['links'].append({
-        'link_id': link_id,
-        'url': url,
-        'qr': qr_base64
-    })
-    link_groups_data[group_id]['link_count'] = len(link_groups_data[group_id]['links'])
-    
-    save_links(links_data)
-    save_link_groups(link_groups_data)
-    
-    return jsonify({'success': True, 'link_id': link_id, 'url': url})
+
+    lid = generate_unique_id()
+    qr = generate_qr_code_base64(url)
+    link = Link(id=lid, url=url, qr=qr, group_id=group_id)
+    db.add(link)
+    db.commit()
+    db.close()
+    return jsonify({'success': True, 'link_id': lid, 'url': url})
 
 @app.route('/api/validate-url', methods=['POST'])
 @login_required
 def api_validate_url():
     data = request.get_json()
     url = data.get('url', '').strip()
-    
-    if not url:
-        return jsonify({'valid': False})
-    
-    is_valid = validate_url(url)
-    return jsonify({'valid': is_valid})
+    return jsonify({'valid': validate_url(url)})
 
 @app.route('/api/qr/<filename>')
 @login_required
-def generate_qr(filename):
-    images_data = load_images()
-    if filename not in images_data:
+def api_qr(filename):
+    db = SessionLocal()
+    img = db.query(Image).filter_by(id=filename).first()
+    db.close()
+    if not img:
         return jsonify({'error': 'Image not found'}), 404
-    
-    url = images_data[filename]['url']
-    qr_base64 = generate_qr_code_base64(url)
-    return jsonify({'qr': qr_base64})
+    qr = generate_qr_code_base64(request.host_url + 'image/' + filename)
+    return jsonify({'qr': qr})
 
 @app.route('/api/qr-group/<group_id>')
-def generate_group_qr(group_id):
-    groups_data = load_groups()
-    if group_id not in groups_data:
+def api_qr_group(group_id):
+    db = SessionLocal()
+    group = db.query(Group).filter_by(id=group_id).first()
+    db.close()
+    if not group:
         return jsonify({'error': 'Group not found'}), 404
-    
-    url = groups_data[group_id]['url']
-    qr_base64 = generate_qr_code_base64(url)
-    return jsonify({'qr': qr_base64})
+    qr = generate_qr_code_base64(group.url)
+    return jsonify({'qr': qr})
 
 @app.route('/api/qr-link/<link_id>')
 @login_required
-def generate_link_qr(link_id):
-    links_data = load_links()
-    if link_id not in links_data:
+def api_qr_link(link_id):
+    db = SessionLocal()
+    link = db.query(Link).filter_by(id=link_id).first()
+    db.close()
+    if not link:
         return jsonify({'error': 'Link not found'}), 404
-    
-    return jsonify({'qr': links_data[link_id]['qr']})
+    return jsonify({'qr': link.qr})
 
 @app.route('/api/qr-link-group/<group_id>')
-def generate_link_group_qr(group_id):
-    link_groups_data = load_link_groups()
-    if group_id not in link_groups_data:
+def api_qr_link_group(group_id):
+    db = SessionLocal()
+    lg = db.query(LinkGroup).filter_by(id=group_id).first()
+    db.close()
+    if not lg:
         return jsonify({'error': 'Link Group not found'}), 404
-    
-    url = link_groups_data[group_id]['url']
-    qr_base64 = generate_qr_code_base64(url)
-    return jsonify({'qr': qr_base64})
+    qr = generate_qr_code_base64(lg.url)
+    return jsonify({'qr': qr})
 
 @app.route('/api/delete/<filename>', methods=['DELETE'])
 @login_required
 def delete_image(filename):
-    images_data = load_images()
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    
-    if filename in images_data:
-        group_id = images_data[filename].get('group_id')
-        if group_id:
-            groups_data = load_groups()
-            if group_id in groups_data:
-                groups_data[group_id]['images'] = [img for img in groups_data[group_id]['images'] if img['filename'] != filename]
-                groups_data[group_id]['image_count'] = len(groups_data[group_id]['images'])
-                save_groups(groups_data)
-        del images_data[filename]
-        save_images(images_data)
-    
-    if os.path.exists(file_path):
-        os.remove(file_path)
-        return jsonify({'success': True, 'message': 'Image deleted successfully'})
-    
-    return jsonify({'success': False, 'message': 'File not found'}), 404
+    db = SessionLocal()
+    img = db.query(Image).filter_by(id=filename).first()
+    if img:
+        db.delete(img)
+        db.commit()
+    db.close()
+    return jsonify({'success': True})
 
 @app.route('/api/delete-link/<link_id>', methods=['DELETE'])
 @login_required
 def delete_link(link_id):
-    links_data = load_links()
-    link_groups_data = load_link_groups()
-    
-    if link_id in links_data:
-        group_id = links_data[link_id].get('group_id')
-        if group_id and group_id in link_groups_data:
-            link_groups_data[group_id]['links'] = [l for l in link_groups_data[group_id]['links'] if l['link_id'] != link_id]
-            link_groups_data[group_id]['link_count'] = len(link_groups_data[group_id]['links'])
-            save_link_groups(link_groups_data)
-        del links_data[link_id]
-        save_links(links_data)
-        return jsonify({'success': True, 'message': 'Link deleted successfully'})
-    
-    return jsonify({'success': False, 'message': 'Link not found'}), 404
+    db = SessionLocal()
+    link = db.query(Link).filter_by(id=link_id).first()
+    if link:
+        db.delete(link)
+        db.commit()
+    db.close()
+    return jsonify({'success': True})
 
 @app.route('/api/delete-group/<group_id>', methods=['DELETE'])
 @login_required
 def delete_group(group_id):
-    groups_data = load_groups()
-    images_data = load_images()
-    
-    if group_id not in groups_data:
-        return jsonify({'success': False, 'message': 'Group not found'}), 404
-    
-    group = groups_data[group_id]
-    for img in group.get('images', []):
-        filename = img.get('filename')
-        if filename:
-            file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            if filename in images_data:
-                del images_data[filename]
-    
-    del groups_data[group_id]
-    save_images(images_data)
-    save_groups(groups_data)
-    
-    return jsonify({'success': True, 'message': 'Group deleted successfully'})
+    db = SessionLocal()
+    group = db.query(Group).filter_by(id=group_id).first()
+    if group:
+        for img in group.images:
+            db.delete(img)
+        db.delete(group)
+        db.commit()
+    db.close()
+    return jsonify({'success': True})
 
 @app.route('/api/delete-link-group/<group_id>', methods=['DELETE'])
 @login_required
 def delete_link_group(group_id):
-    link_groups_data = load_link_groups()
-    links_data = load_links()
-    
-    if group_id not in link_groups_data:
-        return jsonify({'success': False, 'message': 'Link Group not found'}), 404
-    
-    for link_id, data in list(links_data.items()):
-        if data.get('group_id') == group_id:
-            del links_data[link_id]
-    
-    del link_groups_data[group_id]
-    save_links(links_data)
-    save_link_groups(link_groups_data)
-    
-    return jsonify({'success': True, 'message': 'Link Group deleted successfully'})
-
-@app.route('/image/<filename>')
-def serve_image(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    db = SessionLocal()
+    lg = db.query(LinkGroup).filter_by(id=group_id).first()
+    if lg:
+        for link in lg.links:
+            db.delete(link)
+        db.delete(lg)
+        db.commit()
+    db.close()
+    return jsonify({'success': True})
 
 # ============ MAIN ============
-
-app = app
-
 if __name__ == '__main__':
     print("\n" + "="*60)
-    print("🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v4.0")
+    print("🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v5.0 (Persistent DB)")
     print("="*60)
-    print(f"📁 Upload folder: {os.path.abspath(UPLOAD_FOLDER)}")
-    print(f"📁 Data folder: {os.path.abspath(DATA_FOLDER)}")
     print(f"🌐 Server: http://127.0.0.1:5000")
-    print(f"🔑 Login: {ADMIN_USERNAME} / {ADMIN_PASSWORD}")
+    print(f"🔑 Login: Torikul / @torikul_1999")
     print("="*60)
-    print("📌 Features:")
-    print("  📸 Single Image → URL + QR")
-    print("  📸📸 Multiple Images → Group + URL + QR (public gallery + lightbox)")
-    print("  🔗 Single Link → QR")
-    print("  🔗🔗 Multiple Links → Link Group + QR")
-    print("  📁 Unlimited Groups")
-    print("  ➕ Add More to Existing Groups")
-    print("  🆔 All URLs have 'torikul' in ID")
-    print("  🌍 Public group gallery: grid thumbnails, click to open lightbox, swipe/arrows, close to return")
-    print("="*60)
+    print("✅ Now uses SQLite (or PostgreSQL) – data persists across restarts!")
     print("Press CTRL+C to stop\n")
     app.run(debug=True, host='0.0.0.0', port=5000)
