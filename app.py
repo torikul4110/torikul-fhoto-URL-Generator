@@ -1,5 +1,4 @@
 import os
-import uuid
 import secrets
 from datetime import datetime
 from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
@@ -7,7 +6,7 @@ from functools import wraps
 from io import BytesIO
 import base64
 import re
-from sqlalchemy import create_engine, Column, String, DateTime, Integer, Text, LargeBinary, ForeignKey
+from sqlalchemy import create_engine, Column, String, DateTime, Text, LargeBinary, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 import qrcode
@@ -16,9 +15,10 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
 # ============ DATABASE SETUP ============
-DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:///data.db')
+DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:////tmp/data.db')
 if DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
+
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
@@ -120,6 +120,7 @@ def login_required(f):
     return decorated
 
 # ============ TEMPLATES ============
+
 LOGIN_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="bn">
@@ -3391,7 +3392,6 @@ LINK_GROUP_VIEW_TEMPLATE = '''
 </html>
 '''
 
-# ============ NEW PUBLIC GROUP GALLERY + LIGHTBOX TEMPLATE ============
 PUBLIC_GROUP_VIEW_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="bn">
@@ -3714,7 +3714,6 @@ PUBLIC_GROUP_VIEW_TEMPLATE = '''
                 preloadPrev.src = images[prevIdx].url;
             }
 
-            // Event listeners
             document.querySelectorAll('.thumb').forEach((thumb, idx) => {
                 thumb.addEventListener('click', function(e) {
                     e.preventDefault();
@@ -3739,7 +3738,6 @@ PUBLIC_GROUP_VIEW_TEMPLATE = '''
                 }
             });
 
-            // Touch events for lightbox swipe
             let startX = 0, startY = 0;
             let isSwiping = false;
             lightbox.addEventListener('touchstart', function(e) {
@@ -3772,23 +3770,19 @@ PUBLIC_GROUP_VIEW_TEMPLATE = '''
                 }
             }, { passive: true });
 
-            // Prevent context menu on images
             document.addEventListener('contextmenu', function(e) {
                 if (e.target.tagName === 'IMG' || lightbox.classList.contains('active')) {
                     e.preventDefault();
                 }
             });
 
-            // Close lightbox by clicking on background (not on image)
             lightbox.addEventListener('click', function(e) {
                 if (e.target === lightbox || e.target === lightbox.querySelector('.image-wrapper')) {
                     closeLightbox();
                 }
             });
 
-            // Preload first image
             preload(0);
-
             console.log('📸 Group Gallery loaded: ' + total + ' images');
         })();
     </script>
@@ -3874,13 +3868,10 @@ def gallery():
 @login_required
 def groups():
     db = SessionLocal()
-    groups = db.query(Group).all()
     groups_data = {}
-    for g in groups:
+    for g in db.query(Group).all():
         groups_data[g.id] = {
-            'id': g.id,
-            'name': g.name,
-            'url': g.url,
+            'id': g.id, 'name': g.name, 'url': g.url,
             'image_count': g.image_count,
             'created_at': g.created_at.strftime('%Y-%m-%d %H:%M:%S'),
             'images': g.image_list
@@ -3892,13 +3883,10 @@ def groups():
 @login_required
 def link_groups():
     db = SessionLocal()
-    lgs = db.query(LinkGroup).all()
     groups_data = {}
-    for lg in lgs:
+    for lg in db.query(LinkGroup).all():
         groups_data[lg.id] = {
-            'id': lg.id,
-            'name': lg.name,
-            'url': lg.url,
+            'id': lg.id, 'name': lg.name, 'url': lg.url,
             'link_count': lg.link_count,
             'created_at': lg.created_at.strftime('%Y-%m-%d %H:%M:%S'),
             'links': lg.link_list
@@ -3915,9 +3903,7 @@ def view_group(group_id):
     if not group:
         return "Group not found", 404
     return render_template_string(GROUP_VIEW_TEMPLATE, group={
-        'id': group.id,
-        'name': group.name,
-        'url': group.url,
+        'id': group.id, 'name': group.name, 'url': group.url,
         'image_count': group.image_count,
         'created_at': group.created_at.strftime('%Y-%m-%d %H:%M:%S'),
         'images': group.image_list
@@ -3932,9 +3918,7 @@ def view_link_group(group_id):
     if not lg:
         return "Link Group not found", 404
     return render_template_string(LINK_GROUP_VIEW_TEMPLATE, group={
-        'id': lg.id,
-        'name': lg.name,
-        'url': lg.url,
+        'id': lg.id, 'name': lg.name, 'url': lg.url,
         'link_count': lg.link_count,
         'created_at': lg.created_at.strftime('%Y-%m-%d %H:%M:%S'),
         'links': lg.link_list
@@ -3960,10 +3944,9 @@ def serve_image(filename):
     db.close()
     if not img:
         return "Image not found", 404
-    # Determine mimetype from extension
     ext = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'png'
     mime = 'image/' + ext
-    if ext == 'jpg' or ext == 'jpeg':
+    if ext in ['jpg', 'jpeg']:
         mime = 'image/jpeg'
     elif ext == 'png':
         mime = 'image/png'
@@ -3978,6 +3961,7 @@ def serve_image(filename):
     return app.response_class(img.data, mimetype=mime)
 
 # ============ API ROUTES ============
+
 @app.route('/api/upload', methods=['POST'])
 @login_required
 def api_upload():
