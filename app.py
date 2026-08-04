@@ -475,7 +475,7 @@ def regenerate_link_and_qr(item_type, item_id):
         print(f"Regenerate error: {e}")
         return None
 
-# ============ TEMPLATES (app1.py style design) ============
+# ============ TEMPLATES ============
 
 LOGIN_TEMPLATE = '''
 <!DOCTYPE html>
@@ -850,7 +850,6 @@ DASHBOARD_TEMPLATE = '''
 </html>
 '''
 
-# ============ UPLOAD TEMPLATE (app1.py style) ============
 UPLOAD_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -1148,7 +1147,6 @@ UPLOAD_TEMPLATE = '''
 </html>
 '''
 
-# ============ MULTIPLE UPLOAD TEMPLATE (app1.py style) ============
 MULTIPLE_UPLOAD_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -1485,7 +1483,6 @@ MULTIPLE_UPLOAD_TEMPLATE = '''
 </html>
 '''
 
-# ============ GALLERY TEMPLATE (app1.py style) ============
 GALLERY_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -1661,7 +1658,6 @@ GALLERY_TEMPLATE = '''
 </html>
 '''
 
-# ============ GROUPS TEMPLATE (app1.py style) ============
 GROUPS_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -1847,7 +1843,6 @@ GROUPS_TEMPLATE = '''
 </html>
 '''
 
-# ============ LINK_GROUPS_TEMPLATE (app1.py style) ============
 LINK_GROUPS_TEMPLATE = '''
 <!DOCTYPE html>
 <html lang="en">
@@ -2033,6 +2028,645 @@ LINK_GROUPS_TEMPLATE = '''
             container.appendChild(toast);
             setTimeout(() => { toast.remove(); }, 3000);
         }
+    </script>
+</body>
+</html>
+'''
+
+# ============ NEW TEMPLATES (Missing ones) ============
+
+LINK_QR_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Link to QR - TORIKUL SYSTEM</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0a1a; min-height: 100vh; color: #fff; }
+        .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 15px; }
+        .header h1 { font-size: 1.8em; }
+        .header h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .btn-back { padding: 10px 20px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; color: #fff; text-decoration: none; transition: all 0.3s; }
+        .btn-back:hover { background: rgba(255,255,255,0.12); }
+        .input-area { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 16px; padding: 30px; }
+        .input-area label { display: block; color: rgba(255,255,255,0.7); margin-bottom: 8px; font-weight: 500; }
+        .input-area input { width: 100%; padding: 14px 20px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff; font-size: 1em; transition: all 0.3s; outline: none; }
+        .input-area input:focus { border-color: #667eea; background: rgba(255,255,255,0.08); }
+        .input-area input::placeholder { color: rgba(255,255,255,0.3); }
+        .btn { padding: 12px 30px; border: none; border-radius: 12px; font-size: 1em; cursor: pointer; transition: all 0.3s; color: #fff; font-weight: 500; }
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-primary:hover { transform: scale(1.05); box-shadow: 0 10px 30px rgba(102,126,234,0.3); }
+        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-success:hover { transform: scale(1.05); }
+        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-danger:hover { transform: scale(1.05); }
+        .input-row { display: flex; gap: 15px; margin-top: 15px; flex-wrap: wrap; }
+        .input-row input { flex: 1; min-width: 200px; }
+        .result-box { display: none; margin-top: 30px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 20px; padding: 30px; }
+        .qr-result { display: flex; flex-wrap: wrap; gap: 30px; align-items: center; justify-content: center; }
+        .qr-result .info { flex: 1; min-width: 200px; }
+        .qr-result .info .url { color: #667eea; word-break: break-all; }
+        .qr-result .qr-box { text-align: center; padding: 15px; background: #fff; border-radius: 12px; }
+        .qr-result .qr-box img { max-width: 200px; }
+        .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
+        .toast-container { position: fixed; bottom: 30px; right: 30px; z-index: 999; display: flex; flex-direction: column; gap: 10px; }
+        .toast { padding: 14px 24px; border-radius: 12px; background: rgba(20,20,40,0.95); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-size: 0.95em; animation: slideIn 0.3s ease-out; }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .status-msg { padding: 12px 16px; border-radius: 10px; margin-top: 10px; display: none; }
+        .status-msg.success { display: block; background: rgba(81,207,102,0.15); border: 1px solid rgba(81,207,102,0.2); color: #51cf66; }
+        .status-msg.error { display: block; background: rgba(255,107,107,0.15); border: 1px solid rgba(255,107,107,0.2); color: #ff6b6b; }
+        .modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); backdrop-filter:blur(5px); z-index:1000; justify-content:center; align-items:center; }
+        .modal-content { background:#1a1a2e; padding:30px; border-radius:20px; max-width:400px; width:90%; text-align:center; }
+        .modal-content h3 { margin-bottom:15px; }
+        .modal-content p { color:rgba(255,255,255,0.7); margin-bottom:20px; }
+        .modal .btn-group { justify-content:center; }
+        @media (max-width:600px){ .container{padding:15px;} .header h1{font-size:1.3em;} .input-area{padding:20px;} .qr-result{flex-direction:column;} }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><h1>🔗 <span>Link to QR Code</span></h1><a href="/dashboard" class="btn-back">🏠 Dashboard</a></div>
+        <div class="input-area">
+            <label>🔗 Enter any URL</label>
+            <div class="input-row">
+                <input type="text" id="linkInput" placeholder="https://example.com" oninput="validateLink()">
+                <button class="btn btn-primary" onclick="generateQR()">🧾 Generate QR</button>
+            </div>
+            <div class="status-msg" id="statusMsg"></div>
+        </div>
+        <div class="result-box" id="resultBox">
+            <div class="qr-result">
+                <div class="info">
+                    <div><span style="color:rgba(255,255,255,0.5);">🔗 URL:</span> <span class="url" id="resultUrl">-</span></div>
+                    <div style="margin-top:10px;color:rgba(255,255,255,0.4);font-size:0.85em;">✅ Valid Link</div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="copyResultLink()">📋 Copy Link</button>
+                        <button class="btn btn-success" onclick="downloadResultQR()">⬇️ Download QR</button>
+                        <button class="btn btn-danger" onclick="deleteLink()">🗑️ Delete</button>
+                    </div>
+                </div>
+                <div class="qr-box"><p style="color:#333;margin-bottom:10px;">🧾 QR Code</p><img id="resultQrImg" alt="QR Code"></div>
+            </div>
+        </div>
+        <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">Created by TORIKUL</div>
+    </div>
+    <div class="toast-container" id="toastContainer"></div>
+    <div class="modal" id="confirmModal">
+        <div class="modal-content"><h3>⚠️ Are You Sure?</h3><p style="color:rgba(255,255,255,0.7);margin-bottom:20px;">Do you really want to delete this link?</p>
+            <div style="display:flex;gap:10px;justify-content:center;">
+                <button class="btn btn-secondary" onclick="closeModal()" style="padding:10px 20px;border:none;border-radius:10px;font-size:0.95em;cursor:pointer;transition:all 0.3s;color:#fff;font-weight:500;background:rgba(255,255,255,0.1);">Cancel</button>
+                <button class="btn btn-danger" id="confirmDelete" style="padding:10px 20px;border:none;border-radius:10px;font-size:0.95em;cursor:pointer;transition:all 0.3s;color:#fff;font-weight:500;background:linear-gradient(135deg,#ff6b6b,#e03131);">Delete</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        let currentLinkId = null;
+        function validateLink() {
+            const input = document.getElementById('linkInput');
+            const status = document.getElementById('statusMsg');
+            const url = input.value.trim();
+            if (!url) { status.className = 'status-msg'; status.textContent = ''; return; }
+            fetch('/api/validate-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: url }) })
+            .then(res => res.json()).then(data => {
+                if (data.valid) { status.className = 'status-msg success'; status.textContent = '✅ Valid URL'; }
+                else { status.className = 'status-msg error'; status.textContent = '❌ Invalid URL'; }
+            });
+        }
+        function generateQR() {
+            const input = document.getElementById('linkInput');
+            const url = input.value.trim();
+            if (!url) { showToast('❌ Please enter a URL!', 'error'); return; }
+            document.getElementById('resultBox').style.display = 'none';
+            fetch('/api/link-to-qr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: url }) })
+            .then(res => res.json()).then(data => {
+                if (data.success) {
+                    currentLinkId = data.link_id;
+                    document.getElementById('resultUrl').textContent = data.url;
+                    document.getElementById('resultQrImg').src = 'data:image/png;base64,' + data.qr;
+                    document.getElementById('resultBox').style.display = 'block';
+                    showToast('✅ QR Code generated!', 'success');
+                } else { showToast('❌ ' + data.error, 'error'); }
+            }).catch(err => { showToast('❌ Failed to generate QR!', 'error'); });
+        }
+        function copyResultLink() {
+            const url = document.getElementById('resultUrl').textContent;
+            navigator.clipboard.writeText(url).then(() => { showToast('✅ Link copied!', 'success'); }).catch(() => { prompt('Copy this link:', url); });
+        }
+        function downloadResultQR() {
+            const img = document.getElementById('resultQrImg');
+            if (img.src) { const link = document.createElement('a'); link.download = 'qr_' + currentLinkId + '.png'; link.href = img.src; link.click(); showToast('✅ QR Code downloaded!', 'success'); }
+        }
+        function deleteLink() {
+            if (!currentLinkId) return;
+            document.getElementById('confirmModal').style.display = 'flex';
+            document.getElementById('confirmDelete').onclick = function() {
+                closeModal();
+                fetch('/api/delete-link/' + currentLinkId, { method: 'DELETE' })
+                .then(res => res.json()).then(data => {
+                    if (data.success) {
+                        showToast('✅ Link deleted!', 'success');
+                        document.getElementById('resultBox').style.display = 'none';
+                        document.getElementById('linkInput').value = '';
+                        document.getElementById('statusMsg').className = 'status-msg';
+                        document.getElementById('statusMsg').textContent = '';
+                        currentLinkId = null;
+                    } else { showToast('❌ Delete failed!', 'error'); }
+                });
+            };
+        }
+        function closeModal() { document.getElementById('confirmModal').style.display = 'none'; }
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => { toast.remove(); }, 3000);
+        }
+        document.getElementById('linkInput').addEventListener('keypress', function(e) { if (e.key === 'Enter') generateQR(); });
+    </script>
+</body>
+</html>
+'''
+
+MULTIPLE_LINK_QR_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multiple Links - TORIKUL SYSTEM</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0a1a; min-height: 100vh; color: #fff; }
+        .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 15px; }
+        .header h1 { font-size: 1.8em; }
+        .header h1 span { background: linear-gradient(135deg, #667eea, #764ba2); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .btn-back { padding: 10px 20px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; color: #fff; text-decoration: none; transition: all 0.3s; }
+        .btn-back:hover { background: rgba(255,255,255,0.12); }
+        .input-area { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 16px; padding: 30px; }
+        .input-area label { display: block; color: rgba(255,255,255,0.7); margin-bottom: 8px; font-weight: 500; }
+        .input-area textarea { width: 100%; padding: 14px 20px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; color: #fff; font-size: 1em; transition: all 0.3s; outline: none; min-height: 150px; resize: vertical; font-family: inherit; }
+        .input-area textarea:focus { border-color: #667eea; background: rgba(255,255,255,0.08); }
+        .input-area textarea::placeholder { color: rgba(255,255,255,0.3); }
+        .btn { padding: 12px 30px; border: none; border-radius: 12px; font-size: 1em; cursor: pointer; transition: all 0.3s; color: #fff; font-weight: 500; }
+        .btn-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-primary:hover { transform: scale(1.05); box-shadow: 0 10px 30px rgba(102,126,234,0.3); }
+        .btn-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-success:hover { transform: scale(1.05); }
+        .btn-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .btn-danger:hover { transform: scale(1.05); }
+        .btn-secondary { background: rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.2); }
+        .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
+        .result-box { display: none; margin-top: 30px; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 20px; padding: 30px; }
+        .result-box .group-info { margin-bottom: 20px; }
+        .result-box .group-info .label { color: rgba(255,255,255,0.5); }
+        .result-box .group-info .value { color: #667eea; word-break: break-all; }
+        .links-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; margin: 20px 0; }
+        .link-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 15px; }
+        .link-card .link-url { color: #667eea; word-break: break-all; font-size: 0.85em; }
+        .link-card .qr-small { text-align: center; padding: 10px; background: #fff; border-radius: 8px; margin-top: 10px; }
+        .link-card .qr-small img { max-width: 120px; }
+        .link-card .btn-group-small { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+        .btn-small { padding: 5px 12px; border: none; border-radius: 6px; font-size: 0.75em; cursor: pointer; transition: all 0.3s; color: #fff; }
+        .btn-small-primary { background: linear-gradient(135deg, #667eea, #764ba2); }
+        .btn-small-success { background: linear-gradient(135deg, #51cf66, #40c057); }
+        .btn-small-danger { background: linear-gradient(135deg, #ff6b6b, #e03131); }
+        .qr-container { text-align: center; padding: 15px; background: #fff; border-radius: 12px; display: inline-block; margin-top: 15px; }
+        .qr-container img { max-width: 200px; }
+        .toast-container { position: fixed; bottom: 30px; right: 30px; z-index: 999; display: flex; flex-direction: column; gap: 10px; }
+        .toast { padding: 14px 24px; border-radius: 12px; background: rgba(20,20,40,0.95); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); color: #fff; font-size: 0.95em; animation: slideIn 0.3s ease-out; }
+        .toast.success { border-left: 4px solid #51cf66; }
+        .toast.error { border-left: 4px solid #ff6b6b; }
+        @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .modal { display: none; position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); backdrop-filter:blur(5px); z-index:1000; justify-content:center; align-items:center; }
+        .modal-content { background:#1a1a2e; padding:30px; border-radius:20px; max-width:400px; width:90%; text-align:center; }
+        .modal-content h3 { margin-bottom:15px; }
+        .modal-content p { color:rgba(255,255,255,0.7); margin-bottom:20px; }
+        .modal .btn-group { justify-content:center; }
+        @media (max-width:600px){ .container{padding:15px;} .header h1{font-size:1.3em;} .input-area{padding:20px;} .links-grid{grid-template-columns:1fr;} }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><h1>🔗🔗 <span>Multiple Links to QR</span></h1><a href="/dashboard" class="btn-back">🏠 Dashboard</a></div>
+        <div class="input-area">
+            <label>🔗 Enter multiple URLs (one per line)</label>
+            <textarea id="linkInput" placeholder="https://example.com&#10;https://youtube.com&#10;https://facebook.com"></textarea>
+            <div style="margin-top:15px;display:flex;gap:10px;flex-wrap:wrap;">
+                <button class="btn btn-primary" onclick="generateLinks()">🧾 Generate All QR</button>
+                <button class="btn btn-secondary" onclick="clearLinks()">🗑️ Clear All</button>
+            </div>
+        </div>
+        <div class="result-box" id="resultBox">
+            <div class="group-info">
+                <div><span class="label">📁 Group Name:</span> <span class="value" id="groupName">-</span></div>
+                <div><span class="label">🔗 Links:</span> <span class="value" id="linkCount">-</span></div>
+                <div><span class="label">🔗 Group URL:</span> <span class="value" id="groupUrl">-</span></div>
+            </div>
+            <div class="links-grid" id="linksGrid"></div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="copyGroupLink()">📋 Copy Group Link</button>
+                <button class="btn btn-success" onclick="downloadGroupQR()">⬇️ Download QR</button>
+                <button class="btn btn-danger" onclick="deleteLinkGroup()">🗑️ Delete Group</button>
+                <button class="btn btn-secondary" onclick="location.reload()">➕ Add More Links</button>
+            </div>
+            <div style="text-align:center;"><div class="qr-container"><p style="color:#333;margin-bottom:10px;">🧾 Group QR Code</p><img id="groupQrImg" alt="Group QR Code"></div></div>
+        </div>
+        <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">Created by TORIKUL</div>
+    </div>
+    <div class="toast-container" id="toastContainer"></div>
+    <div class="modal" id="confirmModal">
+        <div class="modal-content"><h3>⚠️ Delete Entire Group?</h3><p style="color:rgba(255,255,255,0.7);margin-bottom:20px;">This will delete all links inside this group.</p>
+            <div class="btn-group">
+                <button class="btn btn-secondary" onclick="closeModal()" style="padding:10px 20px;border:none;border-radius:10px;font-size:0.95em;cursor:pointer;transition:all 0.3s;color:#fff;font-weight:500;background:rgba(255,255,255,0.1);">Cancel</button>
+                <button class="btn btn-danger" id="confirmDelete" style="padding:10px 20px;border:none;border-radius:10px;font-size:0.95em;cursor:pointer;transition:all 0.3s;color:#fff;font-weight:500;background:linear-gradient(135deg,#ff6b6b,#e03131);">Delete Group</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        let currentGroupId = null;
+        function generateLinks() {
+            const textarea = document.getElementById('linkInput');
+            const lines = textarea.value.split('\\n').map(s => s.trim()).filter(s => s);
+            if (lines.length === 0) { showToast('❌ Please enter at least one URL!', 'error'); return; }
+            document.getElementById('resultBox').style.display = 'none';
+            fetch('/api/multiple-links-to-qr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ links: lines }) })
+            .then(res => res.json()).then(data => {
+                if (data.success) {
+                    currentGroupId = data.group_id;
+                    document.getElementById('groupName').textContent = data.group_name;
+                    document.getElementById('linkCount').textContent = data.count + ' links';
+                    document.getElementById('groupUrl').textContent = data.group_url;
+                    const grid = document.getElementById('linksGrid');
+                    grid.innerHTML = '';
+                    data.links.forEach(link => {
+                        const card = document.createElement('div');
+                        card.className = 'link-card';
+                        card.innerHTML = `
+                            <div class="link-url">🔗 ${link.url}</div>
+                            <div class="qr-small"><img src="data:image/png;base64,${link.qr}" alt="QR Code"></div>
+                            <div class="btn-group-small">
+                                <button class="btn-small btn-small-primary" onclick="copyLink('${link.url}')">📋 Copy</button>
+                                <button class="btn-small btn-small-success" onclick="downloadLinkQR('${link.link_id}')">⬇️ QR</button>
+                                <button class="btn-small btn-small-danger" onclick="deleteLink('${link.link_id}')">🗑️ Delete</button>
+                            </div>
+                        `;
+                        grid.appendChild(card);
+                    });
+                    document.getElementById('groupQrImg').src = 'data:image/png;base64,' + data.group_qr;
+                    document.getElementById('resultBox').style.display = 'block';
+                    showToast('✅ Group created with ' + data.count + ' links!', 'success');
+                } else { showToast('❌ ' + data.error, 'error'); }
+            }).catch(err => { showToast('❌ Failed to generate QR codes!', 'error'); });
+        }
+        function copyLink(url) { navigator.clipboard.writeText(url).then(() => { showToast('✅ Link copied!', 'success'); }).catch(() => { prompt('Copy this link:', url); }); }
+        function downloadLinkQR(linkId) { fetch('/api/qr-link/' + linkId).then(res => res.json()).then(data => { const link = document.createElement('a'); link.download = 'qr_' + linkId + '.png'; link.href = 'data:image/png;base64,' + data.qr; link.click(); showToast('✅ QR Code downloaded!', 'success'); }); }
+        function deleteLink(linkId) { if (!confirm('Are you sure you want to delete this link?')) return; fetch('/api/delete-link/' + linkId, { method: 'DELETE' }).then(res => res.json()).then(data => { if (data.success) { showToast('✅ Link deleted!', 'success'); location.reload(); } else { showToast('❌ Delete failed!', 'error'); } }); }
+        function copyGroupLink() { const url = document.getElementById('groupUrl').textContent; navigator.clipboard.writeText(url).then(() => { showToast('✅ Group link copied!', 'success'); }).catch(() => { prompt('Copy this link:', url); }); }
+        function downloadGroupQR() { const img = document.getElementById('groupQrImg'); if (img.src) { const link = document.createElement('a'); link.download = 'group_qr_' + currentGroupId + '.png'; link.href = img.src; link.click(); showToast('✅ QR Code downloaded!', 'success'); } }
+        function deleteLinkGroup() { if (!currentGroupId) return; document.getElementById('confirmModal').style.display = 'flex'; document.getElementById('confirmDelete').onclick = function() { closeModal(); fetch('/api/delete-link-group/' + currentGroupId, { method: 'DELETE' }).then(res => res.json()).then(data => { if (data.success) { showToast('✅ Group deleted!', 'success'); document.getElementById('resultBox').style.display = 'none'; } else { showToast('❌ Delete failed!', 'error'); } }); }; }
+        function clearLinks() { document.getElementById('linkInput').value = ''; }
+        function closeModal() { document.getElementById('confirmModal').style.display = 'none'; }
+        function showToast(message, type = 'success') { const container = document.getElementById('toastContainer'); const toast = document.createElement('div'); toast.className = `toast ${type}`; toast.textContent = message; container.appendChild(toast); setTimeout(() => { toast.remove(); }, 3000); }
+    </script>
+</body>
+</html>
+'''
+
+GROUP_VIEW_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ group.name }} - TORIKUL SYSTEM</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:#0a0a1a; min-height:100vh; color:#fff; }
+        .container { max-width:1200px; margin:0 auto; padding:20px; }
+        .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:30px; flex-wrap:wrap; gap:15px; }
+        .header h1 { font-size:1.8em; }
+        .header h1 span { background:linear-gradient(135deg,#667eea,#764ba2); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+        .btn-back { padding:10px 20px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:10px; color:#fff; text-decoration:none; transition:all 0.3s; }
+        .btn-back:hover { background:rgba(255,255,255,0.12); }
+        .group-meta { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:16px; padding:20px 25px; margin-bottom:30px; }
+        .group-meta .info { display:flex; flex-wrap:wrap; gap:20px; }
+        .group-meta .info div { color:rgba(255,255,255,0.6); }
+        .group-meta .info div strong { color:#fff; }
+        .group-meta .url { color:#667eea; word-break:break-all; margin-top:10px; }
+        .gallery-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(250px,1fr)); gap:20px; }
+        .gallery-item { background:rgba(255,255,255,0.04); border-radius:12px; overflow:hidden; transition:all 0.3s; }
+        .gallery-item:hover { transform:translateY(-5px); background:rgba(255,255,255,0.06); }
+        .gallery-item img { width:100%; height:200px; object-fit:cover; }
+        .gallery-item .name { padding:10px; font-size:0.85em; color:rgba(255,255,255,0.6); text-align:center; word-break:break-all; }
+        .btn { padding:8px 18px; border:none; border-radius:8px; font-size:0.9em; cursor:pointer; transition:all 0.3s; color:#fff; text-decoration:none; display:inline-block; }
+        .btn-primary { background:linear-gradient(135deg,#667eea,#764ba2); }
+        .btn-primary:hover { transform:scale(1.05); }
+        .btn-success { background:linear-gradient(135deg,#51cf66,#40c057); }
+        .btn-success:hover { transform:scale(1.05); }
+        .btn-secondary { background:rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background:rgba(255,255,255,0.2); }
+        .btn-group { display:flex; flex-wrap:wrap; gap:10px; margin-top:15px; }
+        .qr-container { text-align:center; padding:15px; background:#fff; border-radius:12px; display:inline-block; }
+        .qr-container img { max-width:180px; }
+        .toast-container { position:fixed; bottom:30px; right:30px; z-index:999; display:flex; flex-direction:column; gap:10px; }
+        .toast { padding:14px 24px; border-radius:12px; background:rgba(20,20,40,0.95); backdrop-filter:blur(10px); border:1px solid rgba(255,255,255,0.1); color:#fff; font-size:0.95em; animation:slideIn 0.3s ease-out; }
+        .toast.success { border-left:4px solid #51cf66; }
+        .toast.error { border-left:4px solid #ff6b6b; }
+        @keyframes slideIn { from { transform:translateX(100px); opacity:0; } to { transform:translateX(0); opacity:1; } }
+        @media (max-width:600px){ .container{padding:15px;} .header h1{font-size:1.3em;} .gallery-grid{grid-template-columns:1fr;} .group-meta .info{flex-direction:column;gap:10px;} }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><h1>📁 <span>{{ group.name }}</span></h1><a href="/groups" class="btn-back">📁 All Groups</a></div>
+        <div class="group-meta">
+            <div class="info">
+                <div>📸 <strong>{{ group.image_count }}</strong> images</div>
+                <div>🕒 <strong>{{ group.created_at }}</strong></div>
+                <div>🆔 <strong>{{ group.id }}</strong></div>
+            </div>
+            <div class="url">🔗 {{ group.url }}</div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="copyToClipboard('{{ group.url }}')">📋 Copy Link</button>
+                <button class="btn btn-success" onclick="downloadGroupQR()">⬇️ Download QR</button>
+            </div>
+            <div style="margin-top:15px;"><div class="qr-container"><p style="color:#333;margin-bottom:10px;">🧾 Group QR Code</p><img id="groupQrImg" alt="QR Code"></div></div>
+        </div>
+        <div class="gallery-grid">
+            {% for img in group.images %}
+            <div class="gallery-item"><img src="{{ img.url }}" alt="{{ img.original_name }}"><div class="name">📸 {{ img.original_name }}</div></div>
+            {% endfor %}
+        </div>
+        <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">Created by TORIKUL</div>
+    </div>
+    <div class="toast-container" id="toastContainer"></div>
+    <script>
+        function copyToClipboard(text) { navigator.clipboard.writeText(text).then(() => { showToast('✅ Link copied!', 'success'); }).catch(() => { prompt('Copy this link:', text); }); }
+        function downloadGroupQR() { const img = document.getElementById('groupQrImg'); if (img.src) { const link = document.createElement('a'); link.download = 'group_qr_{{ group.id }}.png'; link.href = img.src; link.click(); showToast('✅ QR Code downloaded!', 'success'); } }
+        function showToast(message, type = 'success') { const container = document.getElementById('toastContainer'); const toast = document.createElement('div'); toast.className = `toast ${type}`; toast.textContent = message; container.appendChild(toast); setTimeout(() => { toast.remove(); }, 3000); }
+        fetch('/api/qr-group/{{ group.id }}').then(res => res.json()).then(data => { document.getElementById('groupQrImg').src = 'data:image/png;base64,' + data.qr; });
+    </script>
+</body>
+</html>
+'''
+
+LINK_GROUP_VIEW_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ group.name }} - TORIKUL SYSTEM</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background:#0a0a1a; min-height:100vh; color:#fff; }
+        .container { max-width:1100px; margin:0 auto; padding:20px; }
+        .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:30px; flex-wrap:wrap; gap:15px; }
+        .header h1 { font-size:1.8em; }
+        .header h1 span { background:linear-gradient(135deg,#667eea,#764ba2); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+        .btn-back { padding:10px 20px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:10px; color:#fff; text-decoration:none; transition:all 0.3s; }
+        .btn-back:hover { background:rgba(255,255,255,0.12); }
+        .group-meta { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:16px; padding:20px 25px; margin-bottom:30px; }
+        .group-meta .info { display:flex; flex-wrap:wrap; gap:20px; }
+        .group-meta .info div { color:rgba(255,255,255,0.6); }
+        .group-meta .info div strong { color:#fff; }
+        .group-meta .url { color:#667eea; word-break:break-all; margin-top:10px; }
+        .links-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(280px,1fr)); gap:20px; }
+        .link-card { background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:12px; padding:15px; }
+        .link-card .link-url { color:#667eea; word-break:break-all; font-size:0.85em; }
+        .link-card .qr-small { text-align:center; padding:10px; background:#fff; border-radius:8px; margin-top:10px; }
+        .link-card .qr-small img { max-width:120px; }
+        .btn { padding:8px 18px; border:none; border-radius:8px; font-size:0.9em; cursor:pointer; transition:all 0.3s; color:#fff; text-decoration:none; display:inline-block; }
+        .btn-primary { background:linear-gradient(135deg,#667eea,#764ba2); }
+        .btn-primary:hover { transform:scale(1.05); }
+        .btn-success { background:linear-gradient(135deg,#51cf66,#40c057); }
+        .btn-success:hover { transform:scale(1.05); }
+        .btn-secondary { background:rgba(255,255,255,0.1); }
+        .btn-secondary:hover { background:rgba(255,255,255,0.2); }
+        .btn-group { display:flex; flex-wrap:wrap; gap:10px; margin-top:15px; }
+        .qr-container { text-align:center; padding:15px; background:#fff; border-radius:12px; display:inline-block; }
+        .qr-container img { max-width:180px; }
+        .toast-container { position:fixed; bottom:30px; right:30px; z-index:999; display:flex; flex-direction:column; gap:10px; }
+        .toast { padding:14px 24px; border-radius:12px; background:rgba(20,20,40,0.95); backdrop-filter:blur(10px); border:1px solid rgba(255,255,255,0.1); color:#fff; font-size:0.95em; animation:slideIn 0.3s ease-out; }
+        .toast.success { border-left:4px solid #51cf66; }
+        .toast.error { border-left:4px solid #ff6b6b; }
+        @keyframes slideIn { from { transform:translateX(100px); opacity:0; } to { transform:translateX(0); opacity:1; } }
+        @media (max-width:600px){ .container{padding:15px;} .header h1{font-size:1.3em;} .links-grid{grid-template-columns:1fr;} .group-meta .info{flex-direction:column;gap:10px;} }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><h1>📁🔗 <span>{{ group.name }}</span></h1><a href="/link-groups" class="btn-back">📁 All Link Groups</a></div>
+        <div class="group-meta">
+            <div class="info">
+                <div>🔗 <strong>{{ group.link_count }}</strong> links</div>
+                <div>🕒 <strong>{{ group.created_at }}</strong></div>
+                <div>🆔 <strong>{{ group.id }}</strong></div>
+            </div>
+            <div class="url">🔗 {{ group.url }}</div>
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="copyToClipboard('{{ group.url }}')">📋 Copy Link</button>
+                <button class="btn btn-success" onclick="downloadGroupQR()">⬇️ Download QR</button>
+            </div>
+            <div style="margin-top:15px;"><div class="qr-container"><p style="color:#333;margin-bottom:10px;">🧾 Group QR Code</p><img id="groupQrImg" alt="QR Code"></div></div>
+        </div>
+        <div class="links-grid">
+            {% for link in group.links %}
+            <div class="link-card">
+                <div class="link-url">🔗 {{ link.url }}</div>
+                <div class="qr-small"><img src="data:image/png;base64,{{ link.qr }}" alt="QR Code"></div>
+            </div>
+            {% endfor %}
+        </div>
+        <div style="margin-top:30px;text-align:center;color:rgba(255,255,255,0.2);font-size:0.8em;">Created by TORIKUL</div>
+    </div>
+    <div class="toast-container" id="toastContainer"></div>
+    <script>
+        function copyToClipboard(text) { navigator.clipboard.writeText(text).then(() => { showToast('✅ Link copied!', 'success'); }).catch(() => { prompt('Copy this link:', text); }); }
+        function downloadGroupQR() { const img = document.getElementById('groupQrImg'); if (img.src) { const link = document.createElement('a'); link.download = 'group_qr_{{ group.id }}.png'; link.href = img.src; link.click(); showToast('✅ QR Code downloaded!', 'success'); } }
+        function showToast(message, type = 'success') { const container = document.getElementById('toastContainer'); const toast = document.createElement('div'); toast.className = `toast ${type}`; toast.textContent = message; container.appendChild(toast); setTimeout(() => { toast.remove(); }, 3000); }
+        fetch('/api/qr-link-group/{{ group.id }}').then(res => res.json()).then(data => { document.getElementById('groupQrImg').src = 'data:image/png;base64,' + data.qr; });
+    </script>
+</body>
+</html>
+'''
+
+PUBLIC_GROUP_VIEW_TEMPLATE = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>📸 Group Gallery</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        html, body { width:100%; min-height:100vh; background:#0a0a1a; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color:#fff; overflow-x:hidden; touch-action:pan-y; }
+        .container { max-width:1200px; margin:0 auto; padding:20px; }
+        .header { display:flex; justify-content:space-between; align-items:center; padding:10px 0 20px; border-bottom:1px solid rgba(255,255,255,0.05); margin-bottom:25px; }
+        .header h1 { font-size:1.5em; font-weight:600; background:linear-gradient(135deg,#667eea,#764ba2); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+        .header .count { color:rgba(255,255,255,0.5); font-size:0.9em; background:rgba(255,255,255,0.06); padding:6px 16px; border-radius:20px; }
+        .gallery-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(180px,1fr)); gap:12px; }
+        .gallery-grid .thumb { position:relative; aspect-ratio:1/1; overflow:hidden; border-radius:12px; background:rgba(255,255,255,0.03); cursor:pointer; transition:transform 0.2s ease, box-shadow 0.2s ease; }
+        .gallery-grid .thumb:hover { transform:scale(1.02); box-shadow:0 8px 25px rgba(0,0,0,0.5); z-index:2; }
+        .gallery-grid .thumb img { width:100%; height:100%; object-fit:cover; display:block; transition:filter 0.3s; }
+        .gallery-grid .thumb:hover img { filter:brightness(0.85); }
+        .gallery-grid .thumb .overlay { position:absolute; bottom:0; left:0; right:0; padding:10px; background:linear-gradient(transparent, rgba(0,0,0,0.6)); opacity:0; transition:opacity 0.3s; pointer-events:none; }
+        .gallery-grid .thumb:hover .overlay { opacity:1; }
+        .gallery-grid .thumb .overlay span { font-size:0.8em; color:rgba(255,255,255,0.8); }
+        .lightbox { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.92); backdrop-filter:blur(8px); z-index:1000; justify-content:center; align-items:center; flex-direction:column; touch-action:none; }
+        .lightbox.active { display:flex; }
+        .lightbox .close-btn { position:absolute; top:20px; right:25px; font-size:2.2em; color:#fff; cursor:pointer; z-index:10; width:50px; height:50px; display:flex; justify-content:center; align-items:center; border-radius:50%; background:rgba(255,255,255,0.1); transition:background 0.2s; border:none; outline:none; font-weight:300; user-select:none; }
+        .lightbox .close-btn:hover { background:rgba(255,255,255,0.2); }
+        .lightbox .nav-btn { position:absolute; top:50%; transform:translateY(-50%); background:rgba(255,255,255,0.08); border:none; color:#fff; font-size:2.5em; padding:15px 10px; cursor:pointer; border-radius:8px; transition:background 0.2s; z-index:10; user-select:none; backdrop-filter:blur(4px); }
+        .lightbox .nav-btn:hover { background:rgba(255,255,255,0.2); }
+        .lightbox .nav-btn.prev { left:15px; }
+        .lightbox .nav-btn.next { right:15px; }
+        .lightbox .image-wrapper { display:flex; justify-content:center; align-items:center; width:100%; height:100%; padding:20px 60px; }
+        .lightbox .image-wrapper img { max-width:100%; max-height:100%; object-fit:contain; user-select:none; -webkit-user-drag:none; pointer-events:none; transition:opacity 0.25s ease; border-radius:4px; }
+        .lightbox .dots { position:absolute; bottom:30px; left:50%; transform:translateX(-50%); display:flex; gap:10px; background:rgba(0,0,0,0.5); padding:8px 14px; border-radius:30px; backdrop-filter:blur(4px); z-index:10; }
+        .lightbox .dots .dot { width:8px; height:8px; border-radius:50%; background:rgba(255,255,255,0.25); transition:background 0.3s, transform 0.2s; cursor:default; }
+        .lightbox .dots .dot.active { background:#fff; transform:scale(1.3); }
+        .lightbox .counter { position:absolute; top:20px; left:25px; color:rgba(255,255,255,0.5); font-size:0.95em; background:rgba(0,0,0,0.4); padding:5px 14px; border-radius:20px; backdrop-filter:blur(4px); z-index:10; user-select:none; }
+        @media (max-width:600px){ .container{padding:12px;} .gallery-grid{grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:8px;} .header h1{font-size:1.2em;} .lightbox .nav-btn{font-size:1.8em;padding:10px 6px;} .lightbox .nav-btn.prev{left:5px;} .lightbox .nav-btn.next{right:5px;} .lightbox .image-wrapper{padding:10px 30px;} .lightbox .close-btn{top:10px;right:15px;font-size:1.8em;width:40px;height:40px;} .lightbox .counter{font-size:0.8em;padding:4px 12px;left:15px;top:12px;} .lightbox .dots{bottom:15px;gap:8px;padding:6px 12px;} .lightbox .dots .dot{width:6px;height:6px;} }
+        @media (max-width:400px){ .gallery-grid{grid-template-columns:repeat(auto-fill,minmax(90px,1fr));} }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header"><h1>🖼️ Group Gallery</h1><span class="count">{{ images|length }} images</span></div>
+        <div class="gallery-grid" id="galleryGrid">
+            {% for img in images %}
+            <div class="thumb" data-index="{{ loop.index0 }}">
+                <img src="{{ img.url }}" alt="{{ img.original_name or 'Image' }}" loading="lazy">
+                <div class="overlay"><span>🔍 View</span></div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="lightbox" id="lightbox">
+        <button class="close-btn" id="closeLightbox" aria-label="Close">✕</button>
+        <button class="nav-btn prev" id="prevBtn" aria-label="Previous">‹</button>
+        <button class="nav-btn next" id="nextBtn" aria-label="Next">›</button>
+        <div class="counter" id="lightboxCounter">1 / {{ images|length }}</div>
+        <div class="image-wrapper" id="lightboxImageWrapper"><img id="lightboxImg" src="" alt="Lightbox image"></div>
+        <div class="dots" id="lightboxDots">{% for _ in images %}<span class="dot"></span>{% endfor %}</div>
+    </div>
+    <script>
+        (function() {
+            const images = {{ images|tojson }};
+            const total = images.length;
+            if (total === 0) {
+                document.querySelector('.gallery-grid').innerHTML = '<p style="color:rgba(255,255,255,0.4);text-align:center;padding:40px;">No images in this group.</p>';
+                return;
+            }
+            let currentIndex = 0;
+            const lightbox = document.getElementById('lightbox');
+            const lightboxImg = document.getElementById('lightboxImg');
+            const counter = document.getElementById('lightboxCounter');
+            const dots = document.querySelectorAll('#lightboxDots .dot');
+            const closeBtn = document.getElementById('closeLightbox');
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+
+            function openLightbox(index) {
+                if (index < 0) index = total - 1;
+                if (index >= total) index = 0;
+                currentIndex = index;
+                const imgData = images[currentIndex];
+                lightboxImg.src = imgData.url;
+                lightboxImg.alt = imgData.original_name || 'Image';
+                counter.textContent = (currentIndex + 1) + ' / ' + total;
+                dots.forEach((dot, i) => { dot.classList.toggle('active', i === currentIndex); });
+                lightbox.classList.add('active');
+                document.body.style.overflow = 'hidden';
+                preload(currentIndex);
+            }
+
+            function closeLightbox() {
+                lightbox.classList.remove('active');
+                document.body.style.overflow = '';
+            }
+
+            function goTo(index) { if (index < 0) index = total - 1; if (index >= total) index = 0; openLightbox(index); }
+            function next() { goTo(currentIndex + 1); }
+            function prev() { goTo(currentIndex - 1); }
+
+            function preload(index) {
+                const nextIdx = (index + 1) % total;
+                const prevIdx = (index - 1 + total) % total;
+                const preloadNext = new Image(); preloadNext.src = images[nextIdx].url;
+                const preloadPrev = new Image(); preloadPrev.src = images[prevIdx].url;
+            }
+
+            document.querySelectorAll('.thumb').forEach((thumb, idx) => {
+                thumb.addEventListener('click', function(e) { e.preventDefault(); openLightbox(idx); });
+            });
+
+            closeBtn.addEventListener('click', closeLightbox);
+            prevBtn.addEventListener('click', prev);
+            nextBtn.addEventListener('click', next);
+
+            document.addEventListener('keydown', function(e) {
+                if (!lightbox.classList.contains('active')) return;
+                if (e.key === 'Escape') { closeLightbox(); }
+                else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); next(); }
+                else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); prev(); }
+            });
+
+            let startX = 0, startY = 0, isSwiping = false;
+            lightbox.addEventListener('touchstart', function(e) {
+                const touch = e.touches[0];
+                startX = touch.clientX; startY = touch.clientY;
+                isSwiping = true;
+            }, { passive: true });
+
+            lightbox.addEventListener('touchmove', function(e) {
+                if (!isSwiping) return;
+                const touch = e.touches[0];
+                const diffX = touch.clientX - startX;
+                const diffY = touch.clientY - startY;
+                if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 30) {
+                    e.preventDefault();
+                }
+            }, { passive: false });
+
+            lightbox.addEventListener('touchend', function(e) {
+                if (!isSwiping) return;
+                isSwiping = false;
+                if (!e.changedTouches || e.changedTouches.length === 0) return;
+                const touch = e.changedTouches[0];
+                const diffX = touch.clientX - startX;
+                const diffY = touch.clientY - startY;
+                if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
+                    if (diffX < 0) next();
+                    else prev();
+                }
+            }, { passive: true });
+
+            document.addEventListener('contextmenu', function(e) {
+                if (e.target.tagName === 'IMG' || lightbox.classList.contains('active')) {
+                    e.preventDefault();
+                }
+            });
+
+            lightbox.addEventListener('click', function(e) {
+                if (e.target === lightbox || e.target === lightbox.querySelector('.image-wrapper')) {
+                    closeLightbox();
+                }
+            });
+
+            preload(0);
+            console.log('📸 Group Gallery loaded: ' + total + ' images');
+        })();
     </script>
 </body>
 </html>
@@ -2484,13 +3118,13 @@ def api_regenerate_link(item_type, item_id):
 # ============ MAIN ============
 if __name__ == '__main__':
     print("\n" + "=" * 60)
-    print("🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v7.1 (Design Updated)")
+    print("🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v7.1 (Full Fixed)")
     print("=" * 60)
     print(f"🌐 Server: http://127.0.0.1:5000")
     print(f"🔑 Login: {ADMIN_USERNAME} / {ADMIN_PASSWORD}")
     print("=" * 60)
     print("✅ Cloudinary + Supabase + Local JSON Fallback")
-    print("✅ Design: app1.py style (clean, minimal, English)")
+    print("✅ All templates included")
     print("=" * 60)
     print("Press CTRL+C to stop\n")
     app.run(debug=True, host='0.0.0.0', port=5000)
