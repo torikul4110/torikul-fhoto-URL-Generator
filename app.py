@@ -15,8 +15,16 @@ app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
 # ============ DATABASE SETUP ============
-DATABASE_URL = os.environ.get('DATABASE_URL', 'sqlite:////tmp/data.db')
-if DATABASE_URL.startswith('postgres://'):
+# Vercel Postgres uses POSTGRES_URL, fallback to DATABASE_URL or SQLite
+DATABASE_URL = os.environ.get('DATABASE_URL') or os.environ.get('POSTGRES_URL')
+if not DATABASE_URL:
+    DATABASE_URL = 'sqlite:////tmp/data.db'
+    print("⚠️ Using SQLite (data will not persist on Vercel)")
+else:
+    print("✅ Using PostgreSQL database")
+    
+# Fix for Vercel Postgres URL format
+if DATABASE_URL and DATABASE_URL.startswith('postgres://'):
     DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://', 1)
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
@@ -4233,11 +4241,14 @@ def delete_link_group(group_id):
 # ============ MAIN ============
 if __name__ == '__main__':
     print("\n" + "="*60)
-    print("🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v5.0 (Persistent DB)")
+    print("🖼️ TORIKUL IMAGE • LINK • QR SYSTEM v5.0 (PostgreSQL Ready)")
     print("="*60)
     print(f"🌐 Server: http://127.0.0.1:5000")
     print(f"🔑 Login: Torikul / @torikul_1999")
     print("="*60)
-    print("✅ Now uses SQLite (or PostgreSQL) – data persists across restarts!")
+    if DATABASE_URL and 'postgresql' in DATABASE_URL:
+        print("✅ Using PostgreSQL - data persists permanently!")
+    else:
+        print("⚠️ Using SQLite - data will not persist on Vercel!")
     print("Press CTRL+C to stop\n")
     app.run(debug=True, host='0.0.0.0', port=5000)
